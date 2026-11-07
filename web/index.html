@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>mattone · a Game Boy emulator in C + WebAssembly</title>
+  <meta name="description" content="A Game Boy emulator written in C and compiled to a 16 KB WebAssembly module. Play homebrew games or load your own .gb file.">
+  <meta name="theme-color" content="#10121a">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <section id="console" aria-label="Game Boy">
+      <div id="bezel">
+        <canvas id="screen" width="160" height="144" aria-label="Game Boy screen"></canvas>
+        <div id="drop">Drop a .gb file here</div>
+      </div>
+      <div id="title" aria-live="polite"></div>
+
+      <div id="pad" aria-label="Game Boy buttons">
+        <div id="dpad">
+          <button data-button="up" class="up" aria-label="Up"></button>
+          <button data-button="left" class="left" aria-label="Left"></button>
+          <button data-button="right" class="right" aria-label="Right"></button>
+          <button data-button="down" class="down" aria-label="Down"></button>
+        </div>
+        <div id="ab">
+          <button data-button="b" class="round" aria-label="B">B</button>
+          <button data-button="a" class="round" aria-label="A">A</button>
+        </div>
+        <div id="startselect">
+          <button data-button="select" class="pill" aria-label="Select">SELECT</button>
+          <button data-button="start" class="pill" aria-label="Start">START</button>
+        </div>
+      </div>
+    </section>
+
+    <nav id="toolbar" aria-label="Emulator controls">
+      <div class="group">
+        <label class="button" title="Load a .gb ROM from your computer">📂 Load ROM<input id="file" type="file" accept=".gb,.gbc,application/octet-stream" hidden></label>
+        <button id="demo" title="Play Tobu Tobu Girl again">▶ Demo game</button>
+      </div>
+      <div class="group">
+        <button id="pause" title="Pause (P)">❚❚</button>
+        <button id="turbo" title="Fast forward (hold Space)">⏩</button>
+        <button id="reset" title="Reset (R)">⟲</button>
+      </div>
+      <div class="group" role="radiogroup" aria-label="Colours">
+        <select id="palette" title="Screen colours">
+          <option value="grey">Grey</option>
+          <option value="dmg">DMG green</option>
+          <option value="pocket">Pocket</option>
+        </select>
+      </div>
+      <div id="stats" aria-live="off"></div>
+      <p id="keys">Arrows · <kbd>X</kbd> A · <kbd>Z</kbd> B · <kbd>Enter</kbd> Start · <kbd>Shift</kbd> Select · hold <kbd>Space</kbd> to fast forward</p>
+    </nav>
+
+    <footer>
+      <a href="https://github.com/AndreaAcanfora/mattone">Source on GitHub</a> ·
+      Demo game: <a href="https://github.com/SimonLarsen/tobutobugirl">Tobu Tobu Girl</a> by Tangram Games
+      (code MIT, assets <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>) ·
+      No sound yet
+    </footer>
+  </main>
+  <div id="toast" role="status"></div>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+:root {
+  --bg: #10121a; --panel: #181b26; --line: #2a2f3d; --text: #e7e9ee; --muted: #8b91a1; --accent: #9bbc0f;
+  --shell: #c9c4bc; --shell-dark: #a9a39a; --button: #8a1f4a; --ink: #2c2f6b;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overscroll-behavior: none; }
+main { display: flex; flex-direction: column; align-items: center; min-height: 100dvh; padding: 12px 10px 0; gap: 12px; }
+a { color: var(--accent); }
+
+#console { background: var(--shell); border-radius: 14px 14px 56px 14px; padding: 18px 18px 26px;
+  box-shadow: inset 0 -4px 0 var(--shell-dark), 0 10px 30px #0008;
+  width: min(100%, 520px, max(300px, (100dvh - 150px) * 0.8)); }
+#bezel { position: relative; background: #5d5f6e; border-radius: 10px 10px 34px 10px; padding: 18px 9%; }
+#screen { display: block; width: 100%; aspect-ratio: 160 / 144; image-rendering: pixelated; background: #fff;
+  box-shadow: inset 0 0 0 2px #0003; }
+#drop { position: absolute; inset: 0; display: none; place-items: center; border-radius: inherit;
+  background: #000b; color: #fff; font-size: 18px; border: 3px dashed var(--accent); }
+body.dragging #drop { display: grid; }
+#title { color: var(--ink); font: italic 700 15px/1 system-ui, sans-serif; letter-spacing: .04em; margin: 10px 2px 0;
+  min-height: 15px; text-transform: uppercase; }
+
+#pad { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; align-items: center;
+  margin-top: 18px; row-gap: 18px; user-select: none; -webkit-user-select: none; }
+#pad button { -webkit-tap-highlight-color: transparent; touch-action: none; cursor: pointer; font: inherit; }
+#dpad { position: relative; width: 120px; height: 120px; margin-left: 6px; }
+#dpad button { position: absolute; width: 40px; height: 40px; border: 0; background: #2b2b2e; }
+#dpad .up { left: 40px; top: 0; border-radius: 5px 5px 0 0; }
+#dpad .down { left: 40px; bottom: 0; border-radius: 0 0 5px 5px; }
+#dpad .left { left: 0; top: 40px; border-radius: 5px 0 0 5px; }
+#dpad .right { right: 0; top: 40px; border-radius: 0 5px 5px 0; }
+#dpad::after { content: ""; position: absolute; left: 40px; top: 40px; width: 40px; height: 40px; background: #2b2b2e; pointer-events: none; }
+#ab { justify-self: end; display: flex; gap: 18px; transform: rotate(-25deg); margin-right: 6px; }
+#ab .round { width: 58px; height: 58px; border-radius: 50%; border: 0; background: var(--button); color: #fff8;
+  font-weight: 700; box-shadow: 0 3px 0 #5a1230; }
+#ab .round:first-child { margin-top: 28px; }
+#startselect { grid-column: 1 / 3; display: flex; justify-content: center; gap: 22px; }
+#startselect .pill { width: 64px; height: 16px; border-radius: 8px; border: 0; background: #77777f;
+  color: transparent; transform: rotate(-25deg); position: relative; }
+#startselect .pill::after { content: attr(aria-label); position: absolute; top: 20px; left: 0; right: 0;
+  color: var(--ink); font: 700 10px system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+#pad button.held { filter: brightness(.7); transform: translateY(2px); }
+#startselect .pill.held { transform: rotate(-25deg) translateY(2px); }
+
+#toolbar { width: min(100%, 520px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.group { display: flex; gap: 4px; }
+.group button, .group .button, .group select { height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--text); font: inherit; cursor: pointer; display: inline-flex; align-items: center; }
+.group button.active { border-color: var(--accent); }
+#stats { margin-left: auto; color: var(--muted); font: 12px ui-monospace, monospace; }
+#keys { width: 100%; margin: 0; color: var(--muted); font-size: 12px; }
+kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+footer { margin-top: auto; padding: 14px 10px calc(14px + env(safe-area-inset-bottom)); color: var(--muted);
+  font-size: 12px; text-align: center; }
+#toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%) translateY(20px); opacity: 0;
+  background: #000d; padding: 10px 16px; border-radius: 8px; transition: all .25s; pointer-events: none; }
+#toast.show { opacity: 1; transform: translateX(-50%); }
+@media (max-width: 420px) { #keys { display: none; } }
