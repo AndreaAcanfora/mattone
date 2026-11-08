@@ -75,7 +75,7 @@ build/palette-test || failed=$((failed + 1))
 echo "Game Boy Color PPU"
 screen cgb-acid2 tests/roms/cgb-acid2.gbc tests/roms/cgb-acid2.png 60
 echo "Mid-scanline register changes"
-for t in m2_win_en_toggle m3_bgp_change m3_bgp_change_sprites m3_obp0_change m3_scx_low_3_bits; do mealybug "$t"; done
+for t in m2_win_en_toggle m3_bgp_change m3_bgp_change_sprites m3_lcdc_win_en_change_multiple m3_obp0_change m3_scx_low_3_bits; do mealybug "$t"; done
 echo "mooneye (every test that applies to the DMG)"
 for rom in $(cd "$M" && find acceptance emulator-only -name '*.gb' | sort); do
     case "$(basename "$rom" .gb)" in

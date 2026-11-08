@@ -66,7 +66,9 @@ typedef struct {
     uint8_t obj[8], obj_attr[8], obj_index[8]; /* sprite FIFO for pixel x at [x & 7] */
     uint8_t step;                   /* fetcher dot counter: 0-5 fetching, 6+ waiting to push */
     uint8_t tile_x, tile, lo, hi;   /* fetcher: tile column, tile number and data */
-    uint8_t window, window_x;       /* fetching the window, and its tile column */
+    uint8_t window, window_x;       /* window triggered on this line, and its tile column */
+    uint8_t fetch_window;           /* the tile being fetched is the window's */
+    uint8_t window_done_at;         /* pixel position of the last window start */
     uint8_t lx, discard, t;         /* pixels out, SCX pixels still to drop, dots in mode 3 */
     uint8_t sprites[10], sprite_count, sprite_next;
     uint8_t sprite_wait;            /* dots left in a sprite fetch */

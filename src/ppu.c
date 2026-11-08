@@ -116,6 +116,7 @@ static void start_mode3(gb_t *g) {
     f->fetched_first = 0;
     f->tile_x = 0;
     f->window = 0;
+    f->window_done_at = 0xFF;
     f->window_skip = 0;
     f->lx = 0;
     f->t = 0;
@@ -133,7 +134,7 @@ static void start_mode3(gb_t *g) {
  * the tile's attributes). */
 static uint32_t tile_row_addr(const gb_t *g) {
     const gb_fifo *f = &g->fifo;
-    int row = f->window ? g->window_line & 7 : (g->line + g->io[R_SCY]) & 7;
+    int row = f->fetch_window ? g->window_line & 7 : (g->line + g->io[R_SCY]) & 7;
     if (f->attr & 0x40) row = 7 - row;
     uint32_t base = (g->io[R_LCDC] & 0x10) ? (uint32_t)(f->tile * 16) : (uint32_t)(0x1000 + (int8_t)f->tile * 16);
     return (f->attr & 0x08 ? 0x2000u : 0) + base + (uint32_t)(row * 2);
@@ -154,7 +155,11 @@ static void fetcher_dot(gb_t *g) {
     case 1: {
         uint16_t map;
         int tx, ty;
-        if (f->window) {
+        /* Once triggered, the window is fetched while LCDC bit 5 is set; turning
+         * it off mid-line goes back to the background at the next tile. */
+        if (f->window && !(lcdc & 0x20)) f->window = 0; /* needs WX to match again */
+        f->fetch_window = f->window;
+        if (f->fetch_window) {
             map = (lcdc & 0x40) ? 0x1C00 : 0x1800;
             tx = f->window_x;
             ty = g->window_line >> 3;
@@ -192,7 +197,7 @@ static void fetcher_dot(gb_t *g) {
         f->bg_count = (uint8_t)(8 - f->window_skip);
         f->window_skip = 0;
     }
-    if (f->window) f->window_x++;
+    if (f->fetch_window) f->window_x++;
     else f->tile_x++;
 }
 
@@ -325,7 +330,14 @@ static int draw_dot(gb_t *g) {
     }
 
     /* The window takes over once the pixel position reaches WX - 7. */
-    if (!f->window && (lcdc & 0x20) && f->wy_hit && f->lx + 7 >= g->io[R_WX] && g->io[R_WX] <= 166 && !f->discard) {
+    /* The window starts when the pixel position reaches WX - 7 exactly (the
+     * left edge, for WX < 7) with LCDC bit 5 set. Each new start on a line
+     * moves to the next row of the window. */
+    int wx_match = g->io[R_WX] < 7 ? f->lx == 0 : f->lx + 7 == g->io[R_WX];
+    if (!f->window && (lcdc & 0x20) && f->wy_hit && wx_match && g->io[R_WX] <= 166 && !f->discard &&
+        f->lx != f->window_done_at) {
+        if (f->window_used) g->window_line++;
+        f->window_done_at = f->lx;
         f->window = 1;
         f->window_x = 0;
         f->window_used = 1;
