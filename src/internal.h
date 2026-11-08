@@ -67,6 +67,9 @@ void apu_frame_sequencer(gb_t *gb);
 uint8_t apu_read(gb_t *gb, uint8_t reg);
 void apu_write(gb_t *gb, uint8_t reg, uint8_t value);
 
+/* compat.c */
+void cgb_compat_palettes(gb_t *gb);
+
 /* cart.c */
 int cart_init(gb_t *gb);
 uint8_t cart_read(gb_t *gb, uint16_t addr);

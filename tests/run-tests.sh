@@ -70,6 +70,8 @@ blargg cgb_sound/cgb_sound.gb --cgb
 echo "PPU"
 screen dmg-acid2 tests/roms/dmg-acid2.gb tests/roms/dmg-acid2.png 60
 screen "mooneye manual-only/sprite_priority" "$M/manual-only/sprite_priority.gb" tests/roms/sprite_priority.png 120
+echo "Colours for original Game Boy games on a CGB"
+build/palette-test || failed=$((failed + 1))
 echo "Game Boy Color PPU"
 screen cgb-acid2 tests/roms/cgb-acid2.gbc tests/roms/cgb-acid2.png 60
 echo "Mid-scanline register changes"

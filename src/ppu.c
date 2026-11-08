@@ -62,7 +62,7 @@ void ppu_write_lcdc(gb_t *g, uint8_t v) {
         g->fifo.drawing = 0;
         set_mode(g, MODE_HBLANK);
         for (int y = 0; y < GB_HEIGHT; y++) /* a blank screen is white */
-            for (int x = 0; x < GB_WIDTH; x++) g->pixels[y][x] = g->cgb ? 0x7FFF : 0;
+            for (int x = 0; x < GB_WIDTH; x++) g->pixels[y][x] = g->cgb_hw ? 0x7FFF : 0;
         ppu_update_stat(g);
     } else if (!was_on && (v & 0x80)) {
         /* The first line after switching on skips mode 2: it shows mode 0
@@ -277,7 +277,15 @@ static void lcd_dot(gb_t *g) {
     } else {
         /* In the dot after a palette write the DMG sees old | new. */
         uint8_t p = g->io[R_BGP + pal] | f->pal_glitch[pal];
-        g->pixels[g->line][f->lcd[now].x] = (uint16_t)((p >> (color * 2)) & 3);
+        int shade = (p >> (color * 2)) & 3;
+        if (g->cgb_hw) {
+            /* Compatibility mode: the shade picks a colour of BG palette 0 or
+             * OBJ palette 0/1, which the boot ROM filled in. */
+            const uint8_t *ram = pal ? g->obj_palette + (pal - 1) * 8 : g->bg_palette;
+            g->pixels[g->line][f->lcd[now].x] = (uint16_t)((ram[shade * 2] | ram[shade * 2 + 1] << 8) & 0x7FFF);
+        } else {
+            g->pixels[g->line][f->lcd[now].x] = (uint16_t)shade;
+        }
     }
     f->lcd[now].valid = 0;
     f->lcd_count--;
