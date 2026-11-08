@@ -25,7 +25,7 @@ Game: [Tobu Tobu Girl](https://github.com/SimonLarsen/tobutobugirl) by Tangram G
 
 | Part | Status |
 | --- | --- |
-| **CPU** (Sharp SM83) | every opcode including the CB prefix, cycle-accurate per memory access, interrupts, `HALT` and the HALT bug, `EI` delay |
+| **CPU** (Sharp SM83) | every opcode including the CB prefix, cycle-accurate per memory access, interrupts, `HALT` and the HALT bug, `EI` delay, the OAM corruption bug of 16-bit increments and OAM accesses during the OAM scan |
 | **Timer** | DIV/TIMA/TMA/TAC with the falling-edge behaviour, the overflow delay and the reload write races |
 | **PPU** | background, window (with its own line counter), 8×8 and 8×16 sprites, the 10-per-line limit, DMG priority rules; mode 3 stretched by scrolling, the window and each sprite; STAT and LY=LYC timing, OAM/VRAM lock-out and the LCD switch-on line exact to the M-cycle. Pixels are drawn a line at a time, not with a pixel FIFO |
 | **OAM DMA** | start delay, restart, 160 cycles at one byte per cycle, bus conflicts with the CPU |
@@ -49,7 +49,7 @@ The test ROMs run on every push, on GCC and Clang, and again under AddressSaniti
 | [dmg-acid2](https://github.com/mattcurrie/dmg-acid2) (PPU) | ✅ pixel-identical to the reference, natively and in the WebAssembly build |
 | [mooneye test suite](https://github.com/Gekkio/mooneye-test-suite): every `acceptance` and `emulator-only` test that applies to the DMG (94) | ✅ all pass: CPU and interrupt timing, timer, OAM DMA, PPU timing, serial, boot state, MBC1/2/5 |
 | mooneye `manual-only/sprite_priority` | ✅ pixel-identical to the reference |
-| Blargg `oam_bug` | ❌ the OAM corruption bug is not emulated |
+| Blargg `oam_bug` (combined ROM, all 8) | ✅ pass |
 
 The mooneye tests for other models (SGB, MGB, CGB, AGB and the first DMG revision) are skipped. The ROMs are not in
 the repository (Blargg's carry no licence): `tests/fetch-roms.sh` downloads them from pinned releases and checks their

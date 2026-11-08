@@ -9,7 +9,7 @@ cd roms
 
 fetch() { # url file sha256
     if [ -f "$2" ] && echo "$3  $2" | sha256sum -c --status; then return; fi
-    curl -fsSL --retry 3 -o "$2.tmp" "$1"
+    curl -fsSL --retry 6 --retry-delay 10 -o "$2.tmp" "$1"
     echo "$3  $2.tmp" | sha256sum -c --quiet
     mv "$2.tmp" "$2"
 }

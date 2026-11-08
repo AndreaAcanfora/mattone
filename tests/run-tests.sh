@@ -39,6 +39,15 @@ blargg mem_timing/mem_timing.gb
 blargg mem_timing-2/mem_timing.gb
 echo "HALT"
 screen halt_bug "$B/halt_bug.gb" tests/expected/halt_bug.png 300
+echo "OAM corruption bug"
+# The single 7-timing_effect ROM writes a detailed report that outgrows its
+# 8 KiB of cartridge RAM and runs into its own code in WRAM; the combined ROM
+# runs the same test and checks it by CRC.
+for rom in "$B"/oam_bug/rom_singles/*.gb; do
+    case "$rom" in *7-timing_effect.gb) continue ;; esac
+    blargg "oam_bug/rom_singles/$(basename "$rom")"
+done
+blargg oam_bug/oam_bug.gb
 echo "Sound"
 for rom in "$B"/dmg_sound/rom_singles/*.gb; do blargg "dmg_sound/rom_singles/$(basename "$rom")"; done
 blargg dmg_sound/dmg_sound.gb

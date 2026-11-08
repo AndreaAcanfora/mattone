@@ -235,3 +235,51 @@ void ppu_tick(gb_t *g) {
     g->line = (uint8_t)ly;
     ppu_update_stat(g);
 }
+
+/* ---------- the DMG OAM corruption bug ---------- */
+
+/* The OAM row (8 bytes, one per M-cycle) the mode 2 scan is reading, or -1
+ * outside it. The CPU sees the PPU as of the start of the M-cycle, by which
+ * point the scan has moved on to the next row (Blargg's oam_bug timings). */
+static int oam_scan_row(const gb_t *g) {
+    if (!(g->io[R_LCDC] & 0x80) || (g->io[R_STAT] & 3) != MODE_OAM) return -1;
+    return g->dot / 4 + 1;
+}
+
+static uint16_t oam_word(const gb_t *g, int row, int word) {
+    int i = row * 8 + word * 2;
+    return (uint16_t)(g->oam[i] | g->oam[i + 1] << 8);
+}
+
+static void set_oam_word(gb_t *g, int row, int word, uint16_t v) {
+    int i = row * 8 + word * 2;
+    g->oam[i] = v & 0xFF;
+    g->oam[i + 1] = v >> 8;
+}
+
+static void copy_row(gb_t *g, int to, int from) {
+    for (int i = 0; i < 8; i++) g->oam[to * 8 + i] = g->oam[from * 8 + i];
+}
+
+/* A CPU access (or a 16-bit increment of a register pointing at OAM) while
+ * the PPU scans OAM garbles the row being scanned (Pan Docs, "OAM Corruption
+ * Bug"). The address and the value do not matter, only the kind of access. */
+void ppu_oam_bug(gb_t *g, int kind) {
+    int row = oam_scan_row(g);
+    if (row < 1 || row >= 20) return;
+    if (kind == OAM_BUG_IDU_DURING_READ) {
+        /* A read and an increment in the same M-cycle mix the rows above;
+         * the plain read corruption follows with the read itself. */
+        if (row >= 4 && row < 19) {
+            uint16_t a = oam_word(g, row - 2, 0), b = oam_word(g, row - 1, 0);
+            uint16_t c = oam_word(g, row, 0), d = oam_word(g, row - 1, 2);
+            set_oam_word(g, row - 1, 0, (uint16_t)((b & (a | c | d)) | (a & c & d)));
+            copy_row(g, row, row - 1);
+            copy_row(g, row - 2, row - 1);
+        }
+        return;
+    }
+    uint16_t a = oam_word(g, row, 0), b = oam_word(g, row - 1, 0), c = oam_word(g, row - 1, 2);
+    set_oam_word(g, row, 0, kind == OAM_BUG_WRITE ? (uint16_t)(((a ^ c) & (b ^ c)) ^ c) : (uint16_t)(b | (a & c)));
+    for (int w = 1; w < 4; w++) set_oam_word(g, row, w, oam_word(g, row - 1, w));
+}
