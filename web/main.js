@@ -2,7 +2,7 @@
 
 const FRAME_MS = 1000 / 59.7275; // the DMG refreshes at 4194304 / 70224 Hz
 const TURBO = 4;
-const DEMO = { url: "roms/tobutobugirl.gb", name: "Tobu Tobu Girl" };
+const DEMO = { url: "roms/tobutobugirldx.gb", name: "Tobu Tobu Girl Deluxe" };
 const BUTTONS = { right: 1, left: 2, up: 4, down: 8, a: 16, b: 32, select: 64, start: 128 };
 const KEYS = {
   ArrowRight: "right", ArrowLeft: "left", ArrowUp: "up", ArrowDown: "down",
@@ -65,7 +65,7 @@ function insert(bytes, label) {
   }
   persistSave();
   mem().set(bytes, wasm.rom_buffer());
-  const err = wasm.load(bytes.length);
+  const err = wasm.load(bytes.length, Number(modelSelect.value));
   if (err !== 0) {
     showToast(err === -2 ? "Unsupported cartridge type" : "That doesn't look like a Game Boy ROM");
     if (romBytes) insert(romBytes, titleEl.textContent); // put the previous game back
@@ -76,7 +76,8 @@ function insert(bytes, label) {
   const title = readTitle() || label;
   titleEl.textContent = title;
   document.title = `${title} · mattone`;
-  if (bytes[0x143] === 0xc0) showToast("Game Boy Color only: it may not run");
+  if (bytes[0x143] === 0xc0 && !wasm.is_cgb()) showToast("This game needs a Game Boy Color: choose Auto or Color");
+  paletteSelect.disabled = Boolean(wasm.is_cgb());
   restoreSave(bytes, title);
   return true;
 }
@@ -339,6 +340,13 @@ document.getElementById("demo").addEventListener("click", playDemo);
 document.getElementById("file").addEventListener("change", (e) => openFile(e.target.files[0]));
 
 const paletteSelect = document.getElementById("palette");
+const modelSelect = document.getElementById("model");
+modelSelect.value = localStorage.getItem("mattone:model") ?? "0";
+modelSelect.addEventListener("change", () => {
+  localStorage.setItem("mattone:model", modelSelect.value);
+  modelSelect.blur();
+  if (romBytes) insert(romBytes, titleEl.textContent); // restart on the chosen machine
+});
 paletteSelect.value = localStorage.getItem("mattone:palette") ?? "grey";
 paletteSelect.addEventListener("change", () => {
   setPalette(paletteSelect.value);

@@ -62,7 +62,8 @@ typedef struct {
  * a sprite FIFO mixed in as pixels go out. */
 typedef struct {
     uint8_t bg_lo, bg_hi, bg_count; /* background FIFO: two bitplanes shifting out MSB first */
-    uint8_t obj[8], obj_attr[8];    /* sprite FIFO: colour and attributes for pixel x at [x & 7] */
+    uint8_t bg_attr, attr;          /* CGB attributes of the FIFO's tile and of the one fetched */
+    uint8_t obj[8], obj_attr[8], obj_index[8]; /* sprite FIFO for pixel x at [x & 7] */
     uint8_t step;                   /* fetcher dot counter: 0-5 fetching, 6+ waiting to push */
     uint8_t tile_x, tile, lo, hi;   /* fetcher: tile column, tile number and data */
     uint8_t window, window_x;       /* fetching the window, and its tile column */
@@ -70,7 +71,7 @@ typedef struct {
     uint8_t sprites[10], sprite_count, sprite_next;
     uint8_t sprite_wait;            /* dots left in a sprite fetch */
     uint8_t window_used, wy_hit;    /* window drawn on this line; WY matched LY this frame */
-    struct { uint8_t x, color, valid; } lcd[4]; /* pixels on their way to the LCD, by dot */
+    struct { uint8_t x, color, pal, valid; } lcd[4]; /* pixels on their way to the LCD, by dot */
     uint8_t lcd_t, lcd_count;
     uint8_t lcd_just_on;            /* line 0 is the first after switching the LCD on */
     uint8_t startup, sprite_seen, window_start, window_skip;
@@ -85,11 +86,15 @@ typedef struct gb {
     uint8_t ime, ei_pending, halted, halt_bug;
     uint8_t breakpoint; /* set when LD B,B runs: test ROMs use it to say "done" */
 
+    /* Game Boy Color mode (a CGB cartridge); otherwise the original DMG */
+    uint8_t cgb, double_speed;
+
     /* memory */
     const uint8_t *rom;
     uint32_t rom_size;
-    uint8_t vram[0x2000];
-    uint8_t wram[0x2000];
+    uint8_t vram[0x4000]; /* two 8 KiB banks on the CGB */
+    uint8_t wram[0x8000]; /* eight 4 KiB banks on the CGB */
+    uint8_t vram_bank, wram_bank;
     uint8_t oam[0xA0];
     uint8_t hram[0x7F];
     uint8_t io[0x80];
@@ -114,7 +119,16 @@ typedef struct gb {
     gb_fifo fifo;
     uint8_t line; /* the line being drawn; LY changes slightly before it */
     uint8_t window_line, stat_line, frame_done;
-    uint8_t pixels[GB_HEIGHT][GB_WIDTH]; /* shades 0 (white) .. 3 (black) */
+    /* DMG: shades 0 (white) .. 3 (black). CGB: colours as RGB555 (red in the
+     * low 5 bits, as in palette RAM). */
+    uint16_t pixels[GB_HEIGHT][GB_WIDTH];
+    uint8_t bg_palette[64], obj_palette[64]; /* CGB palette RAM */
+    uint8_t bcps, ocps;                      /* CGB palette RAM index (+ auto-increment) */
+
+    /* CGB VRAM DMA */
+    uint16_t hdma_source, hdma_dest;
+    uint8_t hdma_blocks, hdma_hblank; /* 16-byte blocks left; copying one per H-blank */
+    uint8_t cpu_stall;                /* M-cycles the CPU waits for a DMA */
 
     /* OAM DMA */
     uint8_t dma_active, dma_index, dma_start, dma_byte; /* dma_start: M-cycles until a requested transfer begins */
@@ -131,8 +145,15 @@ typedef struct gb {
     uint64_t cycles; /* T-cycles since power on */
 } gb_t;
 
+/* Which machine to be: the original Game Boy (DMG) or the Game Boy Color. */
+enum { GB_MODEL_AUTO, GB_MODEL_DMG, GB_MODEL_CGB };
+
 /* Resets the machine to the state the boot ROM leaves it in and inserts the
- * cartridge. Returns GB_OK or a GB_ERR_* code. */
+ * cartridge. GB_MODEL_AUTO picks the CGB when the header says the game
+ * supports it, the DMG otherwise. Returns GB_OK or a GB_ERR_* code. */
+int gb_load_model(gb_t *gb, const uint8_t *rom, size_t size, int model);
+
+/* gb_load_model() with GB_MODEL_AUTO. */
 int gb_load(gb_t *gb, const uint8_t *rom, size_t size);
 
 /* Runs one instruction (or one interrupt dispatch / halted M-cycle).

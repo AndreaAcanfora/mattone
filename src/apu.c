@@ -137,7 +137,7 @@ static int channel_output(const gb_t *g, int ch) {
     }
 }
 
-static void mix(gb_t *g) {
+static void mix(gb_t *g, int t_cycles) {
     gb_apu *a = &g->apu;
     if (a->dirty) {
         /* The DAC maps 0..15 to +1..-1; summed in integers as 15 - 2 * d. */
@@ -157,7 +157,7 @@ static void mix(gb_t *g) {
     a->acc_right += a->mix_right;
     a->acc_count++;
 
-    a->sample_clock += 4 * a->sample_rate;
+    a->sample_clock += (uint32_t)t_cycles * a->sample_rate;
     if (a->sample_clock < CPU_HZ) return;
     a->sample_clock -= CPU_HZ;
 
@@ -178,7 +178,7 @@ static void mix(gb_t *g) {
     }
 }
 
-void apu_tick(gb_t *g) {
+void apu_tick(gb_t *g, int t_cycles) {
     gb_apu *a = &g->apu;
     a->wave_read = 0;
     if (a->power) {
@@ -187,17 +187,17 @@ void apu_tick(gb_t *g) {
             /* Without sound output only the wave channel's position can be
              * observed (through wave RAM), so the others can rest. */
             if (!c->enabled || (!a->sample_rate && ch != CH_WAVE)) continue;
-            c->timer -= 4;
+            c->timer -= t_cycles;
             while (c->timer <= 0) {
                 /* This step fell on T-cycle 3 + timer of the M-cycle. */
-                int t_offset = 3 + c->timer;
+                int t_offset = t_cycles - 1 + c->timer;
                 c->timer += period(g, ch);
                 step_channel(g, ch);
                 if (ch == CH_WAVE) a->wave_read = t_offset == WAVE_READ_T;
             }
         }
     }
-    if (a->sample_rate) mix(g);
+    if (a->sample_rate) mix(g, t_cycles);
 }
 
 /* ---------- registers ---------- */
@@ -206,7 +206,7 @@ static void trigger(gb_t *g, int ch) {
     gb_channel *c = &g->apu.ch[ch];
     uint8_t nrx2 = g->io[base(ch) + 2];
 
-    if (ch == CH_WAVE && c->enabled && c->timer <= 2) {
+    if (!g->cgb && ch == CH_WAVE && c->enabled && c->timer <= 2) {
         /* DMG: retriggering just as the channel reads wave RAM corrupts it. */
         int pos = ((c->wave_pos + 1) & 31) / 2;
         if (pos < 4) {
@@ -268,6 +268,7 @@ static void power_off(gb_t *g) {
         gb_channel *c = &g->apu.ch[ch];
         c->enabled = 0;
         c->dac = 0;
+        if (g->cgb) c->length = 0; /* the DMG keeps its length counters */
     }
     g->apu.power = 0;
 }
@@ -288,7 +289,9 @@ static int wave_busy(const gb_t *g) { return g->apu.ch[CH_WAVE].enabled; }
 uint8_t apu_read(gb_t *g, uint8_t reg) {
     if (reg >= WAVE) {
         if (!wave_busy(g)) return g->io[reg];
-        return g->apu.wave_read ? g->io[WAVE + g->apu.ch[CH_WAVE].wave_pos / 2] : 0xFF;
+        /* While playing, the CGB always gives the byte being played. */
+        if (g->cgb || g->apu.wave_read) return g->io[WAVE + g->apu.ch[CH_WAVE].wave_pos / 2];
+        return 0xFF;
     }
     if (reg == NR52) {
         uint8_t v = (uint8_t)(0x70 | g->apu.power << 7);
@@ -303,7 +306,7 @@ void apu_write(gb_t *g, uint8_t reg, uint8_t v) {
     g->apu.dirty = 1; /* any write can change what the mixer outputs */
     if (reg >= WAVE) {
         if (!wave_busy(g)) g->io[reg] = v;
-        else if (g->apu.wave_read) g->io[WAVE + g->apu.ch[CH_WAVE].wave_pos / 2] = v;
+        else if (g->cgb || g->apu.wave_read) g->io[WAVE + g->apu.ch[CH_WAVE].wave_pos / 2] = v;
         return;
     }
     if (reg == NR52) {
@@ -312,8 +315,8 @@ void apu_write(gb_t *g, uint8_t reg, uint8_t v) {
         return;
     }
     if (!g->apu.power) {
-        /* DMG: with the APU off only the length counters can be written. */
-        if (reg == NR11 || reg == NR21 || reg == NR31 || reg == NR41) write_length(g, (reg - NR10) / 5, v);
+        /* With the APU off only the DMG's length counters can be written. */
+        if (!g->cgb && (reg == NR11 || reg == NR21 || reg == NR31 || reg == NR41)) write_length(g, (reg - NR10) / 5, v);
         return;
     }
 

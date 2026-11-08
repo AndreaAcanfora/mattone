@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <title>mattone · a Game Boy emulator in C + WebAssembly</title>
-  <meta name="description" content="A Game Boy emulator written in C and compiled to a 25 KB WebAssembly module, with sound. Play homebrew games or load your own .gb file.">
+  <title>mattone · a Game Boy and Game Boy Color emulator in C + WebAssembly</title>
+  <meta name="description" content="A Game Boy and Game Boy Color emulator written in C and compiled to a 27 KB WebAssembly module, with sound. Play homebrew games or load your own .gb or .gbc file.">
   <meta name="theme-color" content="#10121a">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
@@ -14,7 +14,7 @@
     <section id="console" aria-label="Game Boy">
       <div id="bezel">
         <canvas id="screen" width="160" height="144" aria-label="Game Boy screen"></canvas>
-        <div id="drop">Drop a .gb file here</div>
+        <div id="drop">Drop a .gb or .gbc file here</div>
       </div>
       <div id="title" aria-live="polite"></div>
 
@@ -38,8 +38,8 @@
 
     <nav id="toolbar" aria-label="Emulator controls">
       <div class="group">
-        <label class="button" title="Load a .gb ROM from your computer">📂 Load ROM<input id="file" type="file" accept=".gb,.gbc,application/octet-stream" hidden></label>
-        <button id="demo" title="Play Tobu Tobu Girl again">▶ Demo game</button>
+        <label class="button" title="Load a .gb or .gbc ROM from your computer">📂 Load ROM<input id="file" type="file" accept=".gb,.gbc,application/octet-stream" hidden></label>
+        <button id="demo" title="Play Tobu Tobu Girl Deluxe again">▶ Demo game</button>
       </div>
       <div class="group">
         <button id="pause" title="Pause (P)">❚❚</button>
@@ -47,8 +47,13 @@
         <button id="reset" title="Reset (R)">⟲</button>
         <button id="sound" title="Sound on/off (M)">🔊</button>
       </div>
-      <div class="group" role="radiogroup" aria-label="Colours">
-        <select id="palette" title="Screen colours">
+      <div class="group">
+        <select id="model" title="Which Game Boy to be">
+          <option value="0">Auto</option>
+          <option value="1">Game Boy</option>
+          <option value="2">Game Boy Color</option>
+        </select>
+        <select id="palette" title="Screen colours (original Game Boy games)">
           <option value="grey">Grey</option>
           <option value="dmg">DMG green</option>
           <option value="pocket">Pocket</option>
@@ -60,7 +65,7 @@
 
     <footer>
       <a href="https://github.com/AndreaAcanfora/mattone">Source on GitHub</a> ·
-      Demo game: <a href="https://github.com/SimonLarsen/tobutobugirl">Tobu Tobu Girl</a> by Tangram Games
+      Demo game: <a href="https://github.com/SimonLarsen/tobutobugirl-dx">Tobu Tobu Girl Deluxe</a> by Tangram Games
       (code MIT, assets <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>)
     </footer>
   </main>

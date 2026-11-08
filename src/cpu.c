@@ -231,8 +231,13 @@ static void exec(gb_t *g, uint8_t op) {
 
     switch (op) {
     case 0x00: break; /* NOP */
-    case 0x10:        /* STOP: the second byte is skipped; DIV resets */
+    case 0x10: /* STOP: the second byte is skipped; DIV resets. On the CGB, with
+                * KEY1 armed, it switches between normal and double speed. */
         fetch(g);
+        if (g->cgb && (g->io[R_KEY1] & 1)) {
+            g->double_speed ^= 1;
+            g->io[R_KEY1] = 0;
+        }
         g->sysclk = 0;
         break;
     case 0x08: { /* LD (nn),SP */
@@ -410,6 +415,11 @@ static void dispatch_interrupt(gb_t *g) {
 
 int cpu_step(gb_t *g) {
     uint64_t start = g->cycles;
+    if (g->cpu_stall) { /* waiting for a CGB VRAM DMA */
+        g->cpu_stall--;
+        gb_tick(g);
+        return (int)(g->cycles - start);
+    }
     uint8_t pending = g->ie & g->io[R_IF] & 0x1F;
 
     if (g->halted) {

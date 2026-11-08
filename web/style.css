@@ -48,6 +48,7 @@ body.dragging #drop { display: grid; }
 .group button, .group .button, .group select { height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line);
   background: var(--panel); color: var(--text); font: inherit; cursor: pointer; display: inline-flex; align-items: center; }
 .group button.active { border-color: var(--accent); }
+.group select:disabled { opacity: .45; cursor: default; }
 #stats { margin-left: auto; color: var(--muted); font: 12px ui-monospace, monospace; }
 #keys { width: 100%; margin: 0; color: var(--muted); font-size: 12px; }
 kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }

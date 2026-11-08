@@ -16,17 +16,32 @@ static int16_t audio[GB_AUDIO_MAX * 2];
 EXPORT("rom_buffer") uint8_t *rom_buffer(void) { return rom; }
 EXPORT("rom_capacity") uint32_t rom_capacity(void) { return ROM_MAX; }
 
-EXPORT("load") int load(uint32_t size) {
-    int err = gb_load(&gb, rom, size);
+/* model: 0 automatic, 1 DMG, 2 CGB (GB_MODEL_*). */
+EXPORT("load") int load(uint32_t size, uint32_t model) {
+    int err = gb_load_model(&gb, rom, size, (int)model);
     if (!err) gb_title(&gb, title);
     return err;
 }
 
-/* Converts the shades of the last frame to RGBA with the current palette. */
+/* Converts the last frame to RGBA: DMG shades through the current palette,
+ * CGB colours from RGB555 with each channel widened as (c << 3) | (c >> 2). */
 EXPORT("render") void render(void) {
     for (int y = 0; y < GB_HEIGHT; y++)
-        for (int x = 0; x < GB_WIDTH; x++) screen[y * GB_WIDTH + x] = palette[gb.pixels[y][x] & 3];
+        for (int x = 0; x < GB_WIDTH; x++) {
+            uint32_t v = gb.pixels[y][x];
+            if (!gb.cgb) {
+                screen[y * GB_WIDTH + x] = palette[v & 3];
+                continue;
+            }
+            uint32_t r = v & 31, g = (v >> 5) & 31, b = (v >> 10) & 31;
+            r = r << 3 | r >> 2;
+            g = g << 3 | g >> 2;
+            b = b << 3 | b >> 2;
+            screen[y * GB_WIDTH + x] = 0xFF000000u | b << 16 | g << 8 | r;
+        }
 }
+
+EXPORT("is_cgb") uint32_t is_cgb(void) { return gb.cgb; }
 
 EXPORT("run_frame") void run_frame(void) {
     gb_run_frame(&gb);

@@ -57,7 +57,8 @@ void ppu_write_lcdc(gb_t *g, uint8_t v) {
         g->line = 0;
         g->window_line = 0;
         set_mode(g, MODE_HBLANK);
-        mem_fill(g->pixels, 0, sizeof g->pixels);
+        for (int y = 0; y < GB_HEIGHT; y++) /* a blank screen is white */
+            for (int x = 0; x < GB_WIDTH; x++) g->pixels[y][x] = g->cgb ? 0x7FFF : 0;
         ppu_update_stat(g);
     } else if (!was_on && (v & 0x80)) {
         /* The first line after switching on skips mode 2: it shows mode 0
@@ -120,14 +121,20 @@ static void start_mode3(gb_t *g) {
 }
 
 /* VRAM address of the current tile row's low byte. */
-static uint16_t tile_row_addr(const gb_t *g, int row) {
+/* VRAM offset of the fetched tile's row (CGB: bank and vertical flip from
+ * the tile's attributes). */
+static uint32_t tile_row_addr(const gb_t *g) {
     const gb_fifo *f = &g->fifo;
-    if (g->io[R_LCDC] & 0x10) return (uint16_t)(f->tile * 16 + row * 2);
-    return (uint16_t)(0x1000 + (int8_t)f->tile * 16 + row * 2);
+    int row = f->window ? g->window_line & 7 : (g->line + g->io[R_SCY]) & 7;
+    if (f->attr & 0x40) row = 7 - row;
+    uint32_t base = (g->io[R_LCDC] & 0x10) ? (uint32_t)(f->tile * 16) : (uint32_t)(0x1000 + (int8_t)f->tile * 16);
+    return (f->attr & 0x08 ? 0x2000u : 0) + base + (uint32_t)(row * 2);
 }
 
-static int fetch_row(const gb_t *g) {
-    return g->fifo.window ? g->window_line & 7 : (g->line + g->io[R_SCY]) & 7;
+static uint8_t reverse_bits(uint8_t b) {
+    b = (uint8_t)((b & 0xF0) >> 4 | (b & 0x0F) << 4);
+    b = (uint8_t)((b & 0xCC) >> 2 | (b & 0x33) << 2);
+    return (uint8_t)((b & 0xAA) >> 1 | (b & 0x55) << 1);
 }
 
 /* One dot of the background/window fetcher: tile number, low byte and high
@@ -149,10 +156,11 @@ static void fetcher_dot(gb_t *g) {
             ty = ((g->line + g->io[R_SCY]) & 0xFF) >> 3;
         }
         f->tile = g->vram[map + ty * 32 + tx];
+        f->attr = g->cgb ? g->vram[0x2000 + map + ty * 32 + tx] : 0;
         break;
     }
-    case 3: f->lo = g->vram[tile_row_addr(g, fetch_row(g))]; break;
-    case 5: f->hi = g->vram[tile_row_addr(g, fetch_row(g)) + 1]; break;
+    case 3: f->lo = g->vram[tile_row_addr(g)]; break;
+    case 5: f->hi = g->vram[tile_row_addr(g) + 1]; break;
     default: break;
     }
     if (f->step < 6) {
@@ -160,8 +168,9 @@ static void fetcher_dot(gb_t *g) {
         return;
     }
     if (f->bg_count) return; /* wait for the FIFO to drain */
-    f->bg_lo = f->lo;
-    f->bg_hi = f->hi;
+    f->bg_lo = f->attr & 0x20 ? reverse_bits(f->lo) : f->lo;
+    f->bg_hi = f->attr & 0x20 ? reverse_bits(f->hi) : f->hi;
+    f->bg_attr = f->attr;
     f->bg_count = 8;
     if (f->window_skip) {
         f->bg_lo = (uint8_t)(f->bg_lo << f->window_skip);
@@ -183,15 +192,21 @@ static void merge_sprite(gb_t *g, int index) {
     if (attr & 0x40) row = height - 1 - row;
     if (height == 16) tile &= 0xFE;
     row &= height - 1;
-    uint8_t lo = g->vram[tile * 16 + row * 2], hi = g->vram[tile * 16 + row * 2 + 1];
+    uint32_t addr = (g->cgb && (attr & 0x08) ? 0x2000u : 0) + (uint32_t)(tile * 16 + row * 2);
+    uint8_t lo = g->vram[addr], hi = g->vram[addr + 1];
+    /* The DMG (and the CGB with OPRI set) gives the sprite already queued,
+     * which has the lower X, priority; the CGB gives it to the lower OAM index. */
+    int by_index = g->cgb && !(g->io[R_OPRI] & 1);
     for (int i = 0; i < 8; i++) {
         int x = s[1] - 8 + i;
-        if (x < f->lx || x > f->lx + 7 || f->obj[x & 7]) continue;
+        if (x < f->lx || x > f->lx + 7) continue;
         int bit = (attr & 0x20) ? i : 7 - i;
         int c = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
         if (!c) continue;
+        if (f->obj[x & 7] && !(by_index && index < f->obj_index[x & 7])) continue;
         f->obj[x & 7] = (uint8_t)c;
         f->obj_attr[x & 7] = (uint8_t)attr;
+        f->obj_index[x & 7] = (uint8_t)index;
     }
 }
 
@@ -210,19 +225,27 @@ static void output_pixel(gb_t *g) {
         f->discard--;
         return;
     }
-    if (!(lcdc & 0x01)) c = 0; /* DMG: background and window off show colour 0 */
     int slot = f->lx & 7, oc = f->obj[slot], oa = f->obj_attr[slot];
     f->obj[slot] = 0;
-    /* Queue the colour number and which palette it uses: 0 BGP, 1 OBP0, 2 OBP1. */
-    int pal = 0, color = c;
-    if (oc && (lcdc & 0x02) && !((oa & 0x80) && c)) {
-        pal = (oa & 0x10) ? 2 : 1;
-        color = oc;
+    /* Pick the pixel: the colour number, and the palette as 0 BGP, 1 OBP0,
+     * 2 OBP1 on the DMG, or 0-7 background / 8-15 sprite on the CGB. */
+    int pal, color, sprite;
+    if (g->cgb) {
+        /* LCDC bit 0 off: sprites always win. Otherwise colour 0 of the
+         * background loses, and either priority bit makes the rest win. */
+        sprite = oc && (lcdc & 0x02) && (!(lcdc & 0x01) || !c || !((f->bg_attr | oa) & 0x80));
+        pal = sprite ? 8 + (oa & 7) : f->bg_attr & 7;
+    } else {
+        if (!(lcdc & 0x01)) c = 0; /* background and window off show colour 0 */
+        sprite = oc && (lcdc & 0x02) && !((oa & 0x80) && c);
+        pal = sprite ? 1 + ((oa >> 4) & 1) : 0;
     }
+    color = sprite ? oc : c;
     /* lcd_dot() has already run for this dot, so lcd_t is one ahead. */
     int when = (f->lcd_t + LCD_DELAY - 1) & 3;
     f->lcd[when].x = f->lx++;
-    f->lcd[when].color = (uint8_t)(color | pal << 2);
+    f->lcd[when].color = (uint8_t)color;
+    f->lcd[when].pal = (uint8_t)pal;
     f->lcd[when].valid = 1;
     f->lcd_count++;
 }
@@ -233,10 +256,16 @@ static void lcd_dot(gb_t *g) {
     if (f->glitch_dots && --f->glitch_dots == 0) f->pal_glitch[0] = f->pal_glitch[1] = f->pal_glitch[2] = 0;
     int now = f->lcd_t++ & 3;
     if (!f->lcd[now].valid) return;
-    int color = f->lcd[now].color & 3, pal = f->lcd[now].color >> 2;
-    /* In the dot after a palette write the DMG sees old | new. */
-    uint8_t p = g->io[R_BGP + pal] | f->pal_glitch[pal];
-    g->pixels[g->line][f->lcd[now].x] = (uint8_t)((p >> (color * 2)) & 3);
+    int color = f->lcd[now].color, pal = f->lcd[now].pal;
+    if (g->cgb) {
+        const uint8_t *ram = pal & 8 ? g->obj_palette : g->bg_palette;
+        int i = (pal & 7) * 8 + color * 2;
+        g->pixels[g->line][f->lcd[now].x] = (uint16_t)((ram[i] | ram[i + 1] << 8) & 0x7FFF);
+    } else {
+        /* In the dot after a palette write the DMG sees old | new. */
+        uint8_t p = g->io[R_BGP + pal] | f->pal_glitch[pal];
+        g->pixels[g->line][f->lcd[now].x] = (uint16_t)((p >> (color * 2)) & 3);
+    }
     f->lcd[now].valid = 0;
     f->lcd_count--;
 }
@@ -310,19 +339,21 @@ static int draw_dot(gb_t *g) {
 void ppu_tick(gb_t *g) {
     if (!(g->io[R_LCDC] & 0x80)) return;
     int ly = g->line;
+    int dots = g->double_speed ? 2 : 4; /* per CPU M-cycle */
     if ((g->io[R_STAT] & 3) == MODE_DRAW) {
         int done = 0, i = 0;
-        for (; i < 4 && !done; i++) done = draw_dot(g);
-        for (; i < 4; i++) lcd_dot(g); /* the last pixels still travel to the LCD */
+        for (; i < dots && !done; i++) done = draw_dot(g);
+        for (; i < dots; i++) lcd_dot(g); /* the last pixels still travel to the LCD */
         if (done) {
             set_mode(g, MODE_HBLANK);
             if (g->fifo.window_used) g->window_line++;
             ppu_update_stat(g);
+            gb_hblank(g);
         }
     } else if (g->fifo.lcd_count) {
-        for (int i = 0; i < 4; i++) lcd_dot(g);
+        for (int i = 0; i < dots; i++) lcd_dot(g);
     }
-    g->dot += 4;
+    g->dot = (uint16_t)(g->dot + dots);
     /* Line 0 after V-blank starts drawing one M-cycle early relative to its
      * mode 2 interrupt (mealybug's line_0_fix compensates for this). */
     if (ly < GB_HEIGHT && g->dot == (ly == 0 && !g->fifo.lcd_just_on ? DRAW_START - 4 : DRAW_START)) {
@@ -385,6 +416,7 @@ static void copy_row(gb_t *g, int to, int from) {
  * the PPU scans OAM garbles the row being scanned (Pan Docs, "OAM Corruption
  * Bug"). The address and the value do not matter, only the kind of access. */
 void ppu_oam_bug(gb_t *g, int kind) {
+    if (g->cgb) return; /* fixed on the CGB */
     int row = oam_scan_row(g);
     if (row < 1 || row >= 20) return;
     if (kind == OAM_BUG_IDU_DURING_READ) {
@@ -406,7 +438,7 @@ void ppu_oam_bug(gb_t *g, int kind) {
 
 /* A palette write during mode 3: for one dot the DMG uses old | new. */
 void ppu_palette_write(gb_t *g, int reg, uint8_t v) {
-    if ((g->io[R_LCDC] & 0x80) && g->fifo.lcd_count) {
+    if (!g->cgb && (g->io[R_LCDC] & 0x80) && g->fifo.lcd_count) {
         g->fifo.pal_glitch[reg - R_BGP] = g->io[reg];
         g->fifo.glitch_dots = 2;
     }

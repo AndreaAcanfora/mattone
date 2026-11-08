@@ -125,9 +125,9 @@ void cart_write(gb_t *g, uint16_t addr, uint8_t v) {
 }
 
 /* The MBC3 clock counts in emulated time, one second per 4194304 T-cycles. */
-void cart_tick(gb_t *g) {
+void cart_tick(gb_t *g, int t_cycles) {
     if (!g->has_rtc || (g->rtc[RTC_DH] & 0x40)) return;
-    g->rtc_cycles += 4;
+    g->rtc_cycles += (uint32_t)t_cycles;
     if (g->rtc_cycles < CPU_HZ) return;
     g->rtc_cycles -= CPU_HZ;
     if (++g->rtc[RTC_S] != 60) return;

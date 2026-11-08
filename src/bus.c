@@ -39,7 +39,8 @@ static void tima_increment(gb_t *g) {
 static void timer_set(gb_t *g, uint16_t sysclk, uint8_t tac) {
     int before = timer_signal(g);
     /* The APU frame sequencer steps on a falling edge of DIV bit 4. */
-    if ((g->sysclk & 0x1000) && !(sysclk & 0x1000)) apu_frame_sequencer(g);
+    uint16_t fs_bit = g->double_speed ? 0x2000 : 0x1000;
+    if ((g->sysclk & fs_bit) && !(sysclk & fs_bit)) apu_frame_sequencer(g);
     g->sysclk = sysclk;
     g->io[R_TAC] = tac;
     if (before && !timer_signal(g)) {
@@ -73,7 +74,10 @@ static void timer_tick(gb_t *g) {
     uint16_t old = g->sysclk;
     g->sysclk += 4;
     if (before && !timer_signal(g)) tima_increment(g);
-    if ((old & 0x1000) && !(g->sysclk & 0x1000)) apu_frame_sequencer(g);
+    /* In double speed the frame sequencer follows the next bit of DIV, so it
+     * keeps stepping at 512 Hz. */
+    uint16_t fs_bit = g->double_speed ? 0x2000 : 0x1000;
+    if ((old & fs_bit) && !(g->sysclk & fs_bit)) apu_frame_sequencer(g);
     /* The serial clock's edge comes one M-cycle before bit 8 of the system
      * clock falls (mooneye boot_sclk_align). */
     if (((old + 4) & 0x0100) && !((g->sysclk + 4) & 0x0100)) serial_tick(g);
@@ -111,17 +115,82 @@ static int dma_conflict(const gb_t *g, uint16_t addr) {
 }
 
 /* One M-cycle of everything but the PPU. */
+/* One CPU M-cycle: 4 T-cycles, or 2 in the CGB's double speed mode, where the
+ * CPU, timer, serial and OAM DMA run twice as fast as the PPU and APU. */
 void gb_tick_early(gb_t *g) {
-    g->cycles += 4;
+    int t = g->double_speed ? 2 : 4;
+    g->cycles += (uint64_t)t;
     timer_tick(g);
     dma_tick(g);
-    apu_tick(g);
-    if (g->has_rtc) cart_tick(g);
+    apu_tick(g, t);
+    if (g->has_rtc) cart_tick(g, t);
 }
 
 void gb_tick(gb_t *g) {
     gb_tick_early(g);
     ppu_tick(g);
+}
+
+static int ppu_mode(const gb_t *g);
+
+/* WRAM: 0xC000-0xCFFF is bank 0, 0xD000-0xDFFF bank 1 or, on the CGB, the
+ * bank SVBK selects; 0xE000-0xFDFF mirrors both. */
+static uint32_t wram_index(const gb_t *g, uint16_t addr) {
+    if (!(addr & 0x1000)) return addr & 0x0FFF;
+    int bank = g->cgb && g->wram_bank ? g->wram_bank : 1;
+    return (uint32_t)(bank << 12 | (addr & 0x0FFF));
+}
+
+/* Copies one 16-byte block of a CGB VRAM DMA. The CPU waits 8 M-cycles at
+ * normal speed (16 in double speed) for each. */
+static void hdma_block(gb_t *g) {
+    for (int i = 0; i < 16; i++) {
+        uint8_t v = read_raw(g, g->hdma_source++);
+        g->vram[g->vram_bank << 13 | (g->hdma_dest++ & 0x1FFF)] = v;
+    }
+    g->hdma_dest &= 0x1FFF;
+    g->cpu_stall = (uint8_t)(g->cpu_stall + (g->double_speed ? 16 : 8));
+    if (--g->hdma_blocks == 0) g->hdma_hblank = 0;
+}
+
+void gb_hblank(gb_t *g) {
+    if (g->hdma_hblank) hdma_block(g);
+}
+
+static void palette_write(uint8_t *ram, uint8_t *index, uint8_t v) {
+    ram[*index & 0x3F] = v;
+    if (*index & 0x80) *index = (uint8_t)(0x80 | ((*index + 1) & 0x3F));
+}
+
+static void cgb_write(gb_t *g, uint8_t reg, uint8_t v) {
+    switch (reg) {
+    case R_KEY1: g->io[R_KEY1] = v & 1; break; /* armed: the next STOP switches speed */
+    case R_VBK: g->vram_bank = v & 1; break;
+    case R_HDMA1: g->hdma_source = (uint16_t)((g->hdma_source & 0x00FF) | v << 8); break;
+    case R_HDMA2: g->hdma_source = (uint16_t)((g->hdma_source & 0xFF00) | (v & 0xF0)); break;
+    case R_HDMA3: g->hdma_dest = (uint16_t)((g->hdma_dest & 0x00FF) | (v & 0x1F) << 8); break;
+    case R_HDMA4: g->hdma_dest = (uint16_t)((g->hdma_dest & 0xFF00) | (v & 0xF0)); break;
+    case R_HDMA5:
+        if (g->hdma_hblank && !(v & 0x80)) { /* stops an H-blank transfer */
+            g->hdma_hblank = 0;
+            break;
+        }
+        g->hdma_blocks = (uint8_t)((v & 0x7F) + 1);
+        if (v & 0x80) {
+            g->hdma_hblank = 1;
+            if (ppu_mode(g) == 0 && (g->io[R_LCDC] & 0x80)) hdma_block(g);
+        } else {
+            while (g->hdma_blocks) hdma_block(g); /* general-purpose: all at once */
+        }
+        break;
+    case R_BCPS: g->bcps = v & 0xBF; break;
+    case R_OCPS: g->ocps = v & 0xBF; break;
+    case R_BCPD: if (ppu_mode(g) != 3) palette_write(g->bg_palette, &g->bcps, v); else if (g->bcps & 0x80) g->bcps = (uint8_t)(0x80 | ((g->bcps + 1) & 0x3F)); break;
+    case R_OCPD: if (ppu_mode(g) != 3) palette_write(g->obj_palette, &g->ocps, v); else if (g->ocps & 0x80) g->ocps = (uint8_t)(0x80 | ((g->ocps + 1) & 0x3F)); break;
+    case R_OPRI: g->io[R_OPRI] = v & 1; break;
+    case R_SVBK: g->wram_bank = v & 7; break;
+    default: break;
+    }
 }
 
 static uint8_t joypad_read(const gb_t *g) {
@@ -162,9 +231,9 @@ uint8_t gb_read(gb_t *g, uint16_t addr) {
 
 static uint8_t read_raw(gb_t *g, uint16_t addr) {
     if (addr < 0x8000) return cart_read(g, addr);
-    if (addr < 0xA000) return vram_busy(g) ? 0xFF : g->vram[addr & 0x1FFF];
+    if (addr < 0xA000) return vram_busy(g) ? 0xFF : g->vram[g->vram_bank << 13 | (addr & 0x1FFF)];
     if (addr < 0xC000) return cart_read(g, addr);
-    if (addr < 0xFE00) return g->wram[addr & 0x1FFF];
+    if (addr < 0xFE00) return g->wram[wram_index(g, addr)];
     if (addr < 0xFEA0) {
         if (g->dma_active) return 0xFF;
         return oam_busy(g) ? 0xFF : g->oam[addr - 0xFE00];
@@ -179,6 +248,15 @@ static uint8_t read_raw(gb_t *g, uint16_t addr) {
     case R_DIV: return g->sysclk >> 8;
     case R_LY: return (g->io[R_LCDC] & 0x80) ? g->io[R_LY] : 0;
     case 0x26: return apu_read(g, reg);
+    case R_KEY1: return g->cgb ? (uint8_t)(0x7E | g->double_speed << 7 | (g->io[R_KEY1] & 1)) : 0xFF;
+    case R_VBK: return g->cgb ? (uint8_t)(0xFE | g->vram_bank) : 0xFF;
+    case R_HDMA5: return g->cgb ? (uint8_t)(g->hdma_hblank ? g->hdma_blocks - 1 : 0xFF) : 0xFF;
+    case R_BCPS: return g->cgb ? (uint8_t)(g->bcps | 0x40) : 0xFF;
+    case R_OCPS: return g->cgb ? (uint8_t)(g->ocps | 0x40) : 0xFF;
+    case R_BCPD: return g->cgb && ppu_mode(g) != 3 ? g->bg_palette[g->bcps & 0x3F] : 0xFF;
+    case R_OCPD: return g->cgb && ppu_mode(g) != 3 ? g->obj_palette[g->ocps & 0x3F] : 0xFF;
+    case R_OPRI: return g->cgb ? (uint8_t)(0xFE | (g->io[R_OPRI] & 1)) : 0xFF;
+    case R_SVBK: return g->cgb ? (uint8_t)(0xF8 | g->wram_bank) : 0xFF;
     case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35: case 0x36: case 0x37:
     case 0x38: case 0x39: case 0x3A: case 0x3B: case 0x3C: case 0x3D: case 0x3E: case 0x3F:
         return apu_read(g, reg);
@@ -190,11 +268,11 @@ void gb_write(gb_t *g, uint16_t addr, uint8_t v) {
     if (dma_conflict(g, addr)) return;
     if (addr < 0x8000) { cart_write(g, addr, v); return; }
     if (addr < 0xA000) {
-        if (ppu_mode(g) != 3) g->vram[addr & 0x1FFF] = v;
+        if (ppu_mode(g) != 3) g->vram[g->vram_bank << 13 | (addr & 0x1FFF)] = v;
         return;
     }
     if (addr < 0xC000) { cart_write(g, addr, v); return; }
-    if (addr < 0xFE00) { g->wram[addr & 0x1FFF] = v; return; }
+    if (addr < 0xFE00) { g->wram[wram_index(g, addr)] = v; return; }
     if (addr < 0xFF00) ppu_oam_bug(g, OAM_BUG_WRITE); /* the address is >= 0xFE00 here */
     if (addr < 0xFEA0) {
         if (!g->dma_active && !oam_write_busy(g)) g->oam[addr - 0xFE00] = v;
@@ -243,6 +321,10 @@ void gb_write(gb_t *g, uint16_t addr, uint8_t v) {
         ppu_update_stat(g);
         break;
     case R_BGP: case R_OBP0: case R_OBP1: ppu_palette_write(g, reg, v); break;
+    case R_KEY1: case R_VBK: case R_HDMA1: case R_HDMA2: case R_HDMA3: case R_HDMA4: case R_HDMA5:
+    case R_BCPS: case R_BCPD: case R_OCPS: case R_OCPD: case R_OPRI: case R_SVBK:
+        if (g->cgb) cgb_write(g, reg, v);
+        break;
     case R_DMA:
         g->io[R_DMA] = v;
         g->dma_next = (uint16_t)(v << 8);
@@ -275,7 +357,9 @@ static void boot_vram(gb_t *g) {
     g->vram[0x1910] = 0x19;
 }
 
-int gb_load(gb_t *g, const uint8_t *rom, size_t size) {
+int gb_load(gb_t *g, const uint8_t *rom, size_t size) { return gb_load_model(g, rom, size, GB_MODEL_AUTO); }
+
+int gb_load_model(gb_t *g, const uint8_t *rom, size_t size, int model) {
     mem_fill(g, 0, sizeof *g);
     if (size < 0x150 || size > 0x800000) return GB_ERR_SIZE;
     uint8_t sum = 0;
@@ -286,11 +370,22 @@ int gb_load(gb_t *g, const uint8_t *rom, size_t size) {
     int err = cart_init(g);
     if (err) return err;
 
-    /* Register values left by the DMG boot ROM. */
-    g->a = 0x01; g->f = 0xB0;
-    g->b = 0x00; g->c = 0x13;
-    g->d = 0x00; g->e = 0xD8;
-    g->h = 0x01; g->l = 0x4D;
+    /* Register values left by the boot ROM. */
+    g->cgb = model == GB_MODEL_CGB || (model == GB_MODEL_AUTO && (rom[0x143] & 0x80));
+    if (g->cgb) {
+        g->a = 0x11; g->f = 0x80;
+        g->b = 0x00; g->c = 0x00;
+        g->d = 0xFF; g->e = 0x56;
+        g->h = 0x00; g->l = 0x0D;
+        g->wram_bank = 1;
+        mem_fill(g->bg_palette, 0xFF, sizeof g->bg_palette); /* white */
+        mem_fill(g->obj_palette, 0xFF, sizeof g->obj_palette);
+    } else {
+        g->a = 0x01; g->f = 0xB0;
+        g->b = 0x00; g->c = 0x13;
+        g->d = 0x00; g->e = 0xD8;
+        g->h = 0x01; g->l = 0x4D;
+    }
     g->sp = 0xFFFE;
     g->pc = 0x0100;
     g->sysclk = 0xABC8;
@@ -305,7 +400,7 @@ int gb_load(gb_t *g, const uint8_t *rom, size_t size) {
     g->io[R_BGP] = 0xFC;
     g->io[R_OBP0] = 0xFF;
     g->io[R_OBP1] = 0xFF;
-    boot_vram(g);
+    if (!g->cgb) boot_vram(g);
     ppu_reset(g);
     apu_reset(g);
     return GB_OK;

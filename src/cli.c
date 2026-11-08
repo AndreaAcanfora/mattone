@@ -1,7 +1,7 @@
 /* mattone-run: runs a ROM without a window, for tests and screenshots.
  *
- *   mattone-run [--frames N] [--serial] [--until TEXT] [--screenshot FILE.pgm]
- *               [--input FILE] [--dump DIR] [--wav FILE.wav] [--mooneye] ROM
+ *   mattone-run [--frames N] [--serial] [--until TEXT] [--screenshot FILE]
+ *               [--input FILE] [--dump DIR] [--wav FILE.wav] [--mooneye] [--dmg | --cgb] ROM
  *
  * --serial prints the text the ROM reports: what it sent through the link
  * port, or, for test ROMs that use Blargg's memory protocol (signature
@@ -11,6 +11,8 @@
  * (comma-separated: up,down,left,right,a,b,start,select, or "-" for none)
  * are held. --dump writes every frame to DIR/00000.pgm, DIR/00001.pgm...
  * --wav records the sound as 48 kHz 16-bit stereo.
+ * Screenshots and dumps are PGM (DMG) or PPM (CGB) images. --dmg and --cgb
+ * choose the machine; by default CGB games run on a CGB, the rest on a DMG.
  * --mooneye runs until the ROM executes LD B,B, the end marker of the
  * mooneye test suite, then passes if B C D E H L hold 3 5 8 13 21 34.
  * The exit status is 0 unless loading fails, or --until was given and TEXT
@@ -37,14 +39,25 @@ static unsigned char *read_file(const char *path, size_t *size) {
     return buf;
 }
 
-/* Writes the screen as a binary PGM with the four DMG shades. */
-static int write_pgm(const gb_t *gb, const char *path) {
+/* Writes the screen: a binary PGM with the four DMG shades, or for CGB games
+ * a PPM with each 5-bit channel widened as (c << 3) | (c >> 2). */
+static int write_screenshot(const gb_t *gb, const char *path) {
     static const unsigned char shade[4] = {0xFF, 0xAA, 0x55, 0x00};
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
-    fprintf(f, "P5\n%d %d\n255\n", GB_WIDTH, GB_HEIGHT);
+    fprintf(f, "%s\n%d %d\n255\n", gb->cgb ? "P6" : "P5", GB_WIDTH, GB_HEIGHT);
     for (int y = 0; y < GB_HEIGHT; y++)
-        for (int x = 0; x < GB_WIDTH; x++) fputc(shade[gb->pixels[y][x] & 3], f);
+        for (int x = 0; x < GB_WIDTH; x++) {
+            unsigned v = gb->pixels[y][x];
+            if (!gb->cgb) {
+                fputc(shade[v & 3], f);
+                continue;
+            }
+            for (int ch = 0; ch < 3; ch++) {
+                unsigned c = (v >> (5 * ch)) & 0x1F;
+                fputc((int)(c << 3 | c >> 2), f);
+            }
+        }
     return fclose(f);
 }
 
@@ -140,14 +153,14 @@ static int read_inputs(const char *path) {
 }
 
 static void usage(void) {
-    fputs("usage: mattone-run [--frames N] [--serial] [--until TEXT] [--screenshot FILE.pgm]\n"
-          "                   [--input FILE] [--dump DIR] [--wav FILE.wav] [--mooneye] ROM\n", stderr);
+    fputs("usage: mattone-run [--frames N] [--serial] [--until TEXT] [--screenshot FILE]\n"
+          "                   [--input FILE] [--dump DIR] [--wav FILE.wav] [--mooneye] [--dmg | --cgb] ROM\n", stderr);
     exit(2);
 }
 
 int main(int argc, char **argv) {
     long frames = 600;
-    int serial = 0, mooneye = 0;
+    int serial = 0, mooneye = 0, model = GB_MODEL_AUTO;
     const char *until = NULL, *shot = NULL, *rom_path = NULL, *dump = NULL, *wav_path = NULL;
 
     for (int i = 1; i < argc; i++) {
@@ -158,6 +171,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dump = argv[++i];
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wav_path = argv[++i];
         else if (!strcmp(argv[i], "--mooneye")) mooneye = 1;
+        else if (!strcmp(argv[i], "--dmg")) model = GB_MODEL_DMG;
+        else if (!strcmp(argv[i], "--cgb")) model = GB_MODEL_CGB;
         else if (!strcmp(argv[i], "--input") && i + 1 < argc) {
             if (read_inputs(argv[++i])) {
                 perror(argv[i]);
@@ -176,7 +191,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     static gb_t gb;
-    int err = gb_load(&gb, rom, size);
+    int err = gb_load_model(&gb, rom, size, model);
     if (err) {
         fprintf(stderr, "%s: %s\n", rom_path, err == GB_ERR_CART     ? "unsupported cartridge type"
                                     : err == GB_ERR_HEADER ? "bad header checksum"
@@ -206,8 +221,8 @@ int main(int argc, char **argv) {
         if (mooneye && gb.breakpoint) break;
         if (dump) {
             char path[4096];
-            snprintf(path, sizeof path, "%s/%05ld.pgm", dump, f);
-            if (write_pgm(&gb, path)) {
+            snprintf(path, sizeof path, "%s/%05ld.%s", dump, f, gb.cgb ? "ppm" : "pgm");
+            if (write_screenshot(&gb, path)) {
                 perror(path);
                 return 1;
             }
@@ -227,7 +242,7 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
-    if (shot && write_pgm(&gb, shot)) {
+    if (shot && write_screenshot(&gb, shot)) {
         perror(shot);
         return 1;
     }

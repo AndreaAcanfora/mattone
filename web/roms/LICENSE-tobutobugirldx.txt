@@ -1,6 +1,6 @@
-Tobu Tobu Girl (web/roms/tobutobugirl.gb)
-by Tangram Games: https://github.com/SimonLarsen/tobutobugirl
-ROM taken from Homebrew Hub (https://hh.gbdev.io/game/tobutobugirl/), unmodified.
+Tobu Tobu Girl Deluxe (web/roms/tobutobugirldx.gb)
+by Tangram Games: https://github.com/SimonLarsen/tobutobugirl-dx
+ROM taken from Homebrew Hub (https://hh.gbdev.io/game/tobutobugirldeluxe/), unmodified.
 
 Assets (images, text, sound and music): Creative Commons Attribution 4.0
 International, https://creativecommons.org/licenses/by/4.0/

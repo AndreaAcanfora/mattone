@@ -59,3 +59,9 @@ for t in m2_win_en_toggle:b3125f1cfedaa0dd0ff8f02b9b44acf2343af9154d05dfd8788b98
     fetch "https://raw.githubusercontent.com/mattcurrie/mealybug-tearoom-tests/$MB/expected/DMG-blob/${t%%:*}.png" \
         "mealybug/${t%%:*}.png" "${t#*:}"
 done
+
+# cgb-acid2 v1.1 release asset
+fetch https://api.github.com/repos/mattcurrie/cgb-acid2/releases/assets/19755380 cgb-acid2.gbc \
+    197fb0bcec544f0400527fc707e0a94f55435974986e6986b424ace5de81720e
+fetch https://raw.githubusercontent.com/mattcurrie/cgb-acid2/04c6ca40cf75b6a93513fe596de4ab797efaff97/img/reference.png \
+    cgb-acid2.png 9ea9c262c5383353e77d715d021a0f7c5ccbe438f88082cb225756e50c4fdf01
