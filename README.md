@@ -32,7 +32,7 @@ Game: [Tobu Tobu Girl Deluxe](https://github.com/SimonLarsen/tobutobugirl-dx) by
 | **Cartridges** | ROM only, MBC1 (and MBC1M multicarts), MBC2, MBC3 with the real-time clock, MBC5; battery saves |
 | **Joypad, serial** | buttons with the joypad interrupt; the link port with nothing plugged in, clocked at 8192 Hz in step with the system clock |
 | **Sound** | both square channels (with sweep), wave and noise; length, envelope and sweep units on the 512 Hz frame sequencer; DMG quirks such as wave RAM access while playing; stereo panning and master volume; a high-pass filter like the real output capacitor |
-| **Game Boy Color** | CGB games run on a CGB: double speed, the second VRAM bank and eight WRAM banks, colour palette RAM, tile attributes (palette, bank, flips, priority), sprites from either bank with CGB priority by OAM index, general-purpose and H-blank VRAM DMA, the CGB's sound differences. Original Game Boy games run on a DMG; the CGB's compatibility mode for them is not emulated |
+| **Game Boy Color** | CGB games run on a CGB: double speed, the second VRAM bank and eight WRAM banks, colour palette RAM, tile attributes (palette, bank, flips, priority), sprites from either bank with CGB priority by OAM index, general-purpose and H-blank VRAM DMA, the CGB's sound differences, the 2050 M-cycle pause of a speed switch. Original Game Boy games run on a DMG, or on a CGB in its compatibility mode (CGB timing, sound and boot state, DMG graphics; the colours are the DMG palette you pick, not the CGB boot ROM's colourisation) |
 
 ## Accuracy
 
@@ -50,11 +50,12 @@ The test ROMs run on every push, on GCC and Clang, and again under AddressSaniti
 | [dmg-acid2](https://github.com/mattcurrie/dmg-acid2) (PPU) | ✅ pixel-identical to the reference, natively and in the WebAssembly build |
 | [cgb-acid2](https://github.com/mattcurrie/cgb-acid2) (CGB PPU) | ✅ pixel-identical to the reference, natively and in the WebAssembly build |
 | [mooneye test suite](https://github.com/Gekkio/mooneye-test-suite): every `acceptance` and `emulator-only` test that applies to the DMG (94) | ✅ all pass: CPU and interrupt timing, timer, OAM DMA, PPU timing, serial, boot state, MBC1/2/5 |
+| mooneye on a CGB in compatibility mode: every test that applies to the CGB (86, including the CGB-only `misc` boot and PPU tests) | ✅ all pass |
 | mooneye `manual-only/sprite_priority` | ✅ pixel-identical to the reference |
 | [mealybug tearoom tests](https://github.com/mattcurrie/mealybug-tearoom-tests) (registers changed mid-line, DMG) | ⚠️ 3 of 24 pixel-identical (`m3_bgp_change`, `m3_scx_low_3_bits`, `m2_win_en_toggle`); in the rest most pixels match, with differences in the exact dot where some fetches, window restarts and sprite stalls happen |
 | Blargg `oam_bug` (combined ROM, all 8) | ✅ pass |
 
-The mooneye tests for other models (SGB, MGB, CGB, AGB and the first DMG revision) are skipped. The ROMs are not in
+The mooneye tests for other models (SGB, MGB, AGB and the first DMG and CGB revisions) are skipped. The ROMs are not in
 the repository (Blargg's carry no licence): `tests/fetch-roms.sh` downloads them from pinned releases and checks their
 SHA-256.
 

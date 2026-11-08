@@ -18,8 +18,8 @@ blargg() { # rom [args]
 }
 
 # mooneye's ROMs end with LD B,B and the Fibonacci numbers in B-L on success.
-mooneye() { # rom
-    if $RUN --frames 1200 --mooneye "$M/$1" >/dev/null; then pass "$1"; else fail "$1"; fi
+mooneye() { # rom [args]
+    if $RUN --frames 1200 --mooneye "${@:2}" "$M/$1" >/dev/null; then pass "$1 ${*:2}"; else fail "$1 ${*:2}"; fi
 }
 
 # mealybug: the screen when the ROM reaches LD B,B must match the reference.
@@ -81,6 +81,14 @@ for rom in $(cd "$M" && find acceptance emulator-only -name '*.gb' | sort); do
     *-S | *-C | *-A | *-sgb | *-sgb2 | *-mgb | *-dmg0 | *-cgb*) continue ;;
     esac
     mooneye "$rom"
+done
+echo "mooneye on a CGB, in compatibility mode (every test that applies to it)"
+for rom in $(cd "$M" && find acceptance emulator-only misc -name '*.gb' | sort); do
+    case "$(basename "$rom" .gb)" in
+    # DMG, MGB and SGB only, other models, and the first CGB revision
+    *-GS | *-S | *-A | *-dmg* | *-mgb | *-sgb* | *-cgb0) continue ;;
+    esac
+    mooneye "$rom" --cgb
 done
 
 if [ "$failed" -ne 0 ]; then
