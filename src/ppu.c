@@ -62,6 +62,7 @@ void ppu_write_lcdc(gb_t *g, uint8_t v) {
     } else if (!was_on && (v & 0x80)) {
         /* The first line after switching on skips mode 2: it shows mode 0
          * until drawing starts. */
+        g->fifo.lcd_just_on = 1;
         g->dot = 0;
         g->io[R_LY] = 0;
         g->line = 0;
@@ -71,147 +72,262 @@ void ppu_write_lcdc(gb_t *g, uint8_t v) {
     }
 }
 
-/* Colour number (0-3) of pixel (x, y) of a tile row starting at vram offset. */
-static int tile_pixel(const gb_t *g, uint16_t row_addr, int x) {
-    uint8_t lo = g->vram[row_addr], hi = g->vram[row_addr + 1];
-    int bit = 7 - x;
-    return ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
-}
 
-static uint16_t bg_tile_row(const gb_t *g, uint16_t map, int tx, int ty, int row) {
-    uint8_t tile = g->vram[map + ty * 32 + tx];
-    if (g->io[R_LCDC] & 0x10) return (uint16_t)(tile * 16 + row * 2);
-    return (uint16_t)(0x1000 + (int8_t)tile * 16 + row * 2);
-}
 
-/* Extra mode 3 dots for the sprites on a line, which must be sorted from left
- * to right (Pan Docs, "OBJ penalty algorithm"). */
-static int sprite_penalty(const gb_t *g, const int *sorted, int count, int window_x) {
-    int penalty = 0, last_tile = 0x7FFF;
-    for (int k = 0; k < count; k++) {
-        int ox = g->oam[sorted[k] * 4 + 1];
-        if (ox >= 168) continue; /* entirely off the right side: never fetched */
-        /* The tile under the sprite's leftmost pixel, and its pixels to the
-         * right. Sprites at X = 0 wait as if 7 pixels were left, whatever SCX. */
-        int x = ox - 8, u = x >= window_x ? x - window_x : x + g->io[R_SCX];
-        int tile = (u >> 3) + (x >= window_x ? 0x1000 : 0);
-        if (ox == 0) {
-            u = 0;
-            tile = -0x1000;
-        }
-        if (tile != last_tile) {
-            int right = 7 - (u & 7) - 2;
-            if (right > 0) penalty += right;
-            last_tile = tile;
-        }
-        penalty += 6;
-    }
-    return penalty;
-}
+/* ---------- mode 3: the pixel pipeline ---------- */
 
-/* Renders the current line and returns how long mode 3 lasts, in dots. */
-static int render_line(gb_t *g) {
-    uint8_t lcdc = g->io[R_LCDC];
-    int ly = g->line;
-    uint8_t color[GB_WIDTH] = {0}; /* background/window colour numbers */
-    uint8_t *out = g->pixels[ly];
-    int length = 172 + (g->io[R_SCX] & 7), window_x = GB_WIDTH;
-
-    if (lcdc & 0x01) {
-        uint16_t map = (lcdc & 0x08) ? 0x1C00 : 0x1800;
-        int y = (ly + g->io[R_SCY]) & 0xFF;
-        uint16_t row = 0;
-        for (int x = 0; x < GB_WIDTH; x++) {
-            int px = (x + g->io[R_SCX]) & 0xFF;
-            if (x == 0 || (px & 7) == 0) row = bg_tile_row(g, map, px >> 3, y >> 3, y & 7);
-            color[x] = (uint8_t)tile_pixel(g, row, px & 7);
-        }
-
-        int wx = g->io[R_WX] - 7;
-        if ((lcdc & 0x20) && g->io[R_WY] <= ly && wx < GB_WIDTH) {
-            uint16_t wmap = (lcdc & 0x40) ? 0x1C00 : 0x1800;
-            int wy = g->window_line;
-            for (int x = wx < 0 ? 0 : wx; x < GB_WIDTH; x++) {
-                int px = x - wx;
-                if (x == wx || x == 0 || (px & 7) == 0) row = bg_tile_row(g, wmap, px >> 3, wy >> 3, wy & 7);
-                color[x] = (uint8_t)tile_pixel(g, row, px & 7);
-            }
-            g->window_line++; /* the window has its own line counter */
-            window_x = wx;
-            length += 6; /* setting up the fetcher for the window */
-        }
-    }
-
-    uint8_t bgp = g->io[R_BGP];
-    for (int x = 0; x < GB_WIDTH; x++) out[x] = (bgp >> (color[x] * 2)) & 3;
-
-    if (!(lcdc & 0x02)) return length;
-
-    /* Pick the first ten sprites on this line, in OAM order. */
-    int height = (lcdc & 0x04) ? 16 : 8;
-    int chosen[10], count = 0;
-    for (int i = 0; i < 40 && count < 10; i++) {
+/* Picks the (at most ten) sprites on this line, in OAM order, then sorts them
+ * by X; equal X keeps OAM order, which is also the hardware's priority. */
+static void oam_scan(gb_t *g) {
+    gb_fifo *f = &g->fifo;
+    int height = (g->io[R_LCDC] & 0x04) ? 16 : 8;
+    f->sprite_count = 0;
+    for (int i = 0; i < 40 && f->sprite_count < 10; i++) {
         int sy = g->oam[i * 4] - 16;
-        if (ly >= sy && ly < sy + height) chosen[count++] = i;
+        if (g->line >= sy && g->line < sy + height) f->sprites[f->sprite_count++] = (uint8_t)i;
     }
-
-    /* Draw from the lowest priority up, so the winner is drawn last. A lower
-     * X wins; on a tie the earlier OAM entry wins. Only the winning sprite's
-     * pixel counts, even when its BG-priority flag then hides it. */
-    for (int a = 1; a < count; a++) {
-        int v = chosen[a], b = a - 1;
-        while (b >= 0 && g->oam[chosen[b] * 4 + 1] > g->oam[v * 4 + 1]) {
-            chosen[b + 1] = chosen[b];
+    for (int a = 1; a < f->sprite_count; a++) {
+        uint8_t v = f->sprites[a];
+        int b = a - 1;
+        while (b >= 0 && g->oam[f->sprites[b] * 4 + 1] > g->oam[v * 4 + 1]) {
+            f->sprites[b + 1] = f->sprites[b];
             b--;
         }
-        chosen[b + 1] = v;
+        f->sprites[b + 1] = v;
     }
-    /* Pan Docs' sprite penalty, minus 3 dots: that offset makes mode 0 start
-     * on the M-cycle the hardware does in every case of mooneye's
-     * intr_2_mode0_timing_sprites. */
-    int penalty = sprite_penalty(g, chosen, count, window_x);
-    if (penalty > 3) length += penalty - 3;
-
-    int16_t sprite[GB_WIDTH]; /* -1 = none, else shade | behind_bg << 8 */
-    for (int x = 0; x < GB_WIDTH; x++) sprite[x] = -1;
-    for (int k = count - 1; k >= 0; k--) {
-        const uint8_t *s = &g->oam[chosen[k] * 4];
-        int sy = s[0] - 16, sx = s[1] - 8, tile = s[2], attr = s[3];
-        int row = ly - sy;
-        if (attr & 0x40) row = height - 1 - row;
-        if (height == 16) tile &= 0xFE;
-        uint16_t addr = (uint16_t)(tile * 16 + row * 2);
-        uint8_t pal = g->io[(attr & 0x10) ? R_OBP1 : R_OBP0];
-        for (int i = 0; i < 8; i++) {
-            int x = sx + i;
-            if (x < 0 || x >= GB_WIDTH) continue;
-            int c = tile_pixel(g, addr, (attr & 0x20) ? 7 - i : i);
-            if (!c) continue;
-            sprite[x] = (int16_t)(((pal >> (c * 2)) & 3) | ((attr & 0x80) ? 0x100 : 0));
-        }
-    }
-    for (int x = 0; x < GB_WIDTH; x++) {
-        if (sprite[x] < 0) continue;
-        if ((sprite[x] & 0x100) && color[x]) continue;
-        out[x] = sprite[x] & 3;
-    }
-    return length;
+    f->sprite_next = 0;
 }
 
-/* Advances one M-cycle (4 dots). Mode 0 starts on the first M-cycle at or
- * after the end of mode 3, whose length varies. */
+static void start_mode3(gb_t *g) {
+    gb_fifo *f = &g->fifo;
+    oam_scan(g);
+    f->bg_count = 0;
+    for (int i = 0; i < 8; i++) f->obj[i] = 0;
+    for (int i = 0; i < 4; i++) f->lcd[i].valid = 0;
+    f->step = 0;
+    f->tile_x = 0;
+    f->window = 0;
+    f->window_skip = 0;
+    f->lx = 0;
+    f->t = 0;
+    f->discard = 0;
+    f->sprite_wait = 0;
+    f->window_used = 0;
+    f->lcd_count = 0;
+    f->startup = 0;
+    f->last_tile = 0x7FFF;
+    f->sprite_seen = 0;
+}
+
+/* VRAM address of the current tile row's low byte. */
+static uint16_t tile_row_addr(const gb_t *g, int row) {
+    const gb_fifo *f = &g->fifo;
+    if (g->io[R_LCDC] & 0x10) return (uint16_t)(f->tile * 16 + row * 2);
+    return (uint16_t)(0x1000 + (int8_t)f->tile * 16 + row * 2);
+}
+
+static int fetch_row(const gb_t *g) {
+    return g->fifo.window ? g->window_line & 7 : (g->line + g->io[R_SCY]) & 7;
+}
+
+/* One dot of the background/window fetcher: tile number, low byte and high
+ * byte take two dots each, then it pushes 8 pixels once the FIFO is empty. */
+static void fetcher_dot(gb_t *g) {
+    gb_fifo *f = &g->fifo;
+    uint8_t lcdc = g->io[R_LCDC];
+    switch (f->step) {
+    case 1: {
+        uint16_t map;
+        int tx, ty;
+        if (f->window) {
+            map = (lcdc & 0x40) ? 0x1C00 : 0x1800;
+            tx = f->window_x;
+            ty = g->window_line >> 3;
+        } else {
+            map = (lcdc & 0x08) ? 0x1C00 : 0x1800;
+            tx = ((g->io[R_SCX] >> 3) + f->tile_x) & 31;
+            ty = ((g->line + g->io[R_SCY]) & 0xFF) >> 3;
+        }
+        f->tile = g->vram[map + ty * 32 + tx];
+        break;
+    }
+    case 3: f->lo = g->vram[tile_row_addr(g, fetch_row(g))]; break;
+    case 5: f->hi = g->vram[tile_row_addr(g, fetch_row(g)) + 1]; break;
+    default: break;
+    }
+    if (f->step < 6) {
+        f->step++;
+        return;
+    }
+    if (f->bg_count) return; /* wait for the FIFO to drain */
+    f->bg_lo = f->lo;
+    f->bg_hi = f->hi;
+    f->bg_count = 8;
+    if (f->window_skip) {
+        f->bg_lo = (uint8_t)(f->bg_lo << f->window_skip);
+        f->bg_hi = (uint8_t)(f->bg_hi << f->window_skip);
+        f->bg_count = (uint8_t)(8 - f->window_skip);
+        f->window_skip = 0;
+    }
+    if (f->window) f->window_x++;
+    else f->tile_x++;
+    f->step = 0;
+}
+
+/* Fetches a sprite's row and merges it under the sprites already queued. */
+static void merge_sprite(gb_t *g, int index) {
+    gb_fifo *f = &g->fifo;
+    const uint8_t *s = &g->oam[index * 4];
+    int height = (g->io[R_LCDC] & 0x04) ? 16 : 8;
+    int row = g->line - (s[0] - 16), tile = s[2], attr = s[3];
+    if (attr & 0x40) row = height - 1 - row;
+    if (height == 16) tile &= 0xFE;
+    row &= height - 1;
+    uint8_t lo = g->vram[tile * 16 + row * 2], hi = g->vram[tile * 16 + row * 2 + 1];
+    for (int i = 0; i < 8; i++) {
+        int x = s[1] - 8 + i;
+        if (x < f->lx || x > f->lx + 7 || f->obj[x & 7]) continue;
+        int bit = (attr & 0x20) ? i : 7 - i;
+        int c = ((hi >> bit) & 1) << 1 | ((lo >> bit) & 1);
+        if (!c) continue;
+        f->obj[x & 7] = (uint8_t)c;
+        f->obj_attr[x & 7] = (uint8_t)attr;
+    }
+}
+
+/* Pixels reach the LCD, where the palettes are applied, 3 dots after they
+ * leave the FIFO (mealybug m3_bgp_change). */
+#define LCD_DELAY 3
+
+static void output_pixel(gb_t *g) {
+    gb_fifo *f = &g->fifo;
+    uint8_t lcdc = g->io[R_LCDC];
+    int c = (f->bg_hi >> 7) << 1 | f->bg_lo >> 7;
+    f->bg_lo = (uint8_t)(f->bg_lo << 1);
+    f->bg_hi = (uint8_t)(f->bg_hi << 1);
+    f->bg_count--;
+    if (f->discard) {
+        f->discard--;
+        return;
+    }
+    if (!(lcdc & 0x01)) c = 0; /* DMG: background and window off show colour 0 */
+    int slot = f->lx & 7, oc = f->obj[slot], oa = f->obj_attr[slot];
+    f->obj[slot] = 0;
+    /* Queue the colour number and which palette it uses: 0 BGP, 1 OBP0, 2 OBP1. */
+    int pal = 0, color = c;
+    if (oc && (lcdc & 0x02) && !((oa & 0x80) && c)) {
+        pal = (oa & 0x10) ? 2 : 1;
+        color = oc;
+    }
+    /* lcd_dot() has already run for this dot, so lcd_t is one ahead. */
+    int when = (f->lcd_t + LCD_DELAY - 1) & 3;
+    f->lcd[when].x = f->lx++;
+    f->lcd[when].color = (uint8_t)(color | pal << 2);
+    f->lcd[when].valid = 1;
+    f->lcd_count++;
+}
+
+/* Puts the pixel that has waited LCD_DELAY dots onto the screen. */
+static void lcd_dot(gb_t *g) {
+    gb_fifo *f = &g->fifo;
+    if (f->glitch_dots && --f->glitch_dots == 0) f->pal_glitch[0] = f->pal_glitch[1] = f->pal_glitch[2] = 0;
+    int now = f->lcd_t++ & 3;
+    if (!f->lcd[now].valid) return;
+    int color = f->lcd[now].color & 3, pal = f->lcd[now].color >> 2;
+    /* In the dot after a palette write the DMG sees old | new. */
+    uint8_t p = g->io[R_BGP + pal] | f->pal_glitch[pal];
+    g->pixels[g->line][f->lcd[now].x] = (uint8_t)((p >> (color * 2)) & 3);
+    f->lcd[now].valid = 0;
+    f->lcd_count--;
+}
+
+/* One dot of mode 3. Returns 1 when the line's 160 pixels are out. */
+static int draw_dot(gb_t *g) {
+    gb_fifo *f = &g->fifo;
+    uint8_t lcdc = g->io[R_LCDC];
+    f->t++;
+    /* The low 3 bits of SCX (pixels to drop) are read 4 dots into mode 3
+     * (mealybug m3_scx_low_3_bits). */
+    if (f->t == 5) f->discard = g->io[R_SCX] & 7;
+
+    if (f->sprite_wait) {
+        lcd_dot(g);
+        if (--f->sprite_wait == 0) merge_sprite(g, f->sprites[f->sprite_next++]);
+        return 0;
+    }
+
+    /* The window takes over once the pixel position reaches WX - 7. */
+    if (!f->window && (lcdc & 0x20) && f->wy_hit && f->lx + 7 >= g->io[R_WX] && g->io[R_WX] <= 166 && !f->discard) {
+        f->window = 1;
+        f->window_x = 0;
+        f->window_used = 1;
+        f->window_start = f->lx;
+        f->bg_count = 0;
+        f->step = 0;
+        /* With WX < 7 the window's first pixels fall off the left edge; they
+         * are dropped as the first tile is pushed, at no cost in time. */
+        f->window_skip = (uint8_t)(g->io[R_WX] < 7 ? 7 - g->io[R_WX] : 0);
+    }
+
+    /* A sprite starting here stalls the pipeline (Pan Docs' penalty: wait for
+     * the background fetch, then 6 dots; 3 dots fewer for the first sprite of
+     * the line, as mooneye's intr_2_mode0_timing_sprites measures). */
+    if (f->sprite_next < f->sprite_count && (lcdc & 0x02) && !f->discard) {
+        int sx = g->oam[f->sprites[f->sprite_next] * 4 + 1];
+        if (sx >= 168) {
+            f->sprite_next = f->sprite_count; /* sorted: the rest are off screen too */
+        } else if (sx <= f->lx + 8) {
+            int x = sx - 8, u = f->window ? x - f->window_start : x + g->io[R_SCX];
+            int tile = (u >> 3) + (f->window ? 0x1000 : 0), penalty = 6;
+            if (sx == 0) { /* fully off the left edge: waits as if at a tile start */
+                u = 0;
+                tile = -0x1000;
+            }
+            if (tile != f->last_tile) {
+                if (5 - (u & 7) > 0) penalty += 5 - (u & 7);
+                f->last_tile = tile;
+            }
+            if (!f->sprite_seen) {
+                penalty -= 3;
+                f->sprite_seen = 1;
+            }
+            f->sprite_wait = (uint8_t)penalty;
+            lcd_dot(g);
+            if (--f->sprite_wait == 0) merge_sprite(g, f->sprites[f->sprite_next++]);
+            return 0;
+        }
+    }
+
+    fetcher_dot(g);
+    lcd_dot(g);
+    /* The first 12 dots fetch the first tile (twice, on the hardware). */
+    if (++f->startup <= 12 || !f->bg_count) return 0;
+    output_pixel(g);
+    return f->lx == GB_WIDTH;
+}
+
+/* Advances one M-cycle (4 dots). */
 void ppu_tick(gb_t *g) {
     if (!(g->io[R_LCDC] & 0x80)) return;
     int ly = g->line;
-    g->dot += 4;
-    if (ly < GB_HEIGHT) {
-        if (g->dot == DRAW_START) {
-            set_mode(g, MODE_DRAW);
-            g->hblank_dot = (uint16_t)(DRAW_START + render_line(g));
-        } else if ((g->io[R_STAT] & 3) == MODE_DRAW && g->dot >= g->hblank_dot) {
+    if ((g->io[R_STAT] & 3) == MODE_DRAW) {
+        int done = 0, i = 0;
+        for (; i < 4 && !done; i++) done = draw_dot(g);
+        for (; i < 4; i++) lcd_dot(g); /* the last pixels still travel to the LCD */
+        if (done) {
             set_mode(g, MODE_HBLANK);
+            if (g->fifo.window_used) g->window_line++;
             ppu_update_stat(g);
         }
+    } else if (g->fifo.lcd_count) {
+        for (int i = 0; i < 4; i++) lcd_dot(g);
+    }
+    g->dot += 4;
+    /* Line 0 after V-blank starts drawing one M-cycle early relative to its
+     * mode 2 interrupt (mealybug's line_0_fix compensates for this). */
+    if (ly < GB_HEIGHT && g->dot == (ly == 0 && !g->fifo.lcd_just_on ? DRAW_START - 4 : DRAW_START)) {
+        set_mode(g, MODE_DRAW);
+        start_mode3(g);
     }
     if (g->dot == DOTS_PER_LINE - 4) {
         /* LY moves on one M-cycle before the line ends. */
@@ -227,12 +343,16 @@ void ppu_tick(gb_t *g) {
         set_mode(g, MODE_VBLANK);
         g->io[R_IF] |= INT_VBLANK;
         g->frame_done = 1;
+    } else if (ly == 1) {
+        g->fifo.lcd_just_on = 0;
     } else if (ly == 154) {
         ly = 0;
         g->window_line = 0;
+        g->fifo.wy_hit = 0;
     }
     if (ly < GB_HEIGHT) set_mode(g, MODE_OAM);
     g->line = (uint8_t)ly;
+    if (g->io[R_WY] == ly) g->fifo.wy_hit = 1;
     ppu_update_stat(g);
 }
 
@@ -282,4 +402,13 @@ void ppu_oam_bug(gb_t *g, int kind) {
     uint16_t a = oam_word(g, row, 0), b = oam_word(g, row - 1, 0), c = oam_word(g, row - 1, 2);
     set_oam_word(g, row, 0, kind == OAM_BUG_WRITE ? (uint16_t)(((a ^ c) & (b ^ c)) ^ c) : (uint16_t)(b | (a & c)));
     for (int w = 1; w < 4; w++) set_oam_word(g, row, w, oam_word(g, row - 1, w));
+}
+
+/* A palette write during mode 3: for one dot the DMG uses old | new. */
+void ppu_palette_write(gb_t *g, int reg, uint8_t v) {
+    if ((g->io[R_LCDC] & 0x80) && g->fifo.lcd_count) {
+        g->fifo.pal_glitch[reg - R_BGP] = g->io[reg];
+        g->fifo.glitch_dots = 2;
+    }
+    g->io[reg] = v;
 }

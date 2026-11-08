@@ -2,7 +2,7 @@
 
 # mattone
 
-**A Game Boy emulator written in C11, with sound. The same core runs natively and in your browser as a 22 KB WebAssembly module. It passes every DMG test of the mooneye suite.**
+**A Game Boy emulator written in C11, with sound. The same core runs natively and in your browser as a 25 KB WebAssembly module. It passes every DMG test of the mooneye suite.**
 
 *Mattone* is Italian for "brick", the nickname the original Game Boy earned.
 
@@ -10,7 +10,7 @@
 
 [![CI](https://github.com/AndreaAcanfora/mattone/actions/workflows/ci.yml/badge.svg)](https://github.com/AndreaAcanfora/mattone/actions/workflows/ci.yml)
 [![C11](https://img.shields.io/badge/C-11-A8B9CC?logo=c&logoColor=white)](src)
-[![WebAssembly](https://img.shields.io/badge/wasm-22_KB-654FF0?logo=webassembly&logoColor=white)](src/wasm.c)
+[![WebAssembly](https://img.shields.io/badge/wasm-25_KB-654FF0?logo=webassembly&logoColor=white)](src/wasm.c)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Donate with PayPal](https://img.shields.io/badge/donate-PayPal-00457C?logo=paypal)](https://www.paypal.com/paypalme/AndreaAca)
 
@@ -27,7 +27,7 @@ Game: [Tobu Tobu Girl](https://github.com/SimonLarsen/tobutobugirl) by Tangram G
 | --- | --- |
 | **CPU** (Sharp SM83) | every opcode including the CB prefix, cycle-accurate per memory access, interrupts, `HALT` and the HALT bug, `EI` delay, the OAM corruption bug of 16-bit increments and OAM accesses during the OAM scan |
 | **Timer** | DIV/TIMA/TMA/TAC with the falling-edge behaviour, the overflow delay and the reload write races |
-| **PPU** | background, window (with its own line counter), 8×8 and 8×16 sprites, the 10-per-line limit, DMG priority rules; mode 3 stretched by scrolling, the window and each sprite; STAT and LY=LYC timing, OAM/VRAM lock-out and the LCD switch-on line exact to the M-cycle. Pixels are drawn a line at a time, not with a pixel FIFO |
+| **PPU** | a pixel pipeline like the hardware's: a background/window fetcher feeding a pixel FIFO, a sprite FIFO, pixels out one per dot, so registers changed in the middle of a line take effect at the right pixel (palette writes, fine scroll); background, window (with its own line counter), 8×8 and 8×16 sprites, the 10-per-line limit, DMG priority rules; mode 3 stretched by scrolling, the window and each sprite; STAT and LY=LYC timing, OAM/VRAM lock-out and the LCD switch-on line exact to the M-cycle; the boot ROM's logo left in VRAM |
 | **OAM DMA** | start delay, restart, 160 cycles at one byte per cycle, bus conflicts with the CPU |
 | **Cartridges** | ROM only, MBC1 (and MBC1M multicarts), MBC2, MBC3 with the real-time clock, MBC5; battery saves |
 | **Joypad, serial** | buttons with the joypad interrupt; the link port with nothing plugged in, clocked at 8192 Hz in step with the system clock |
@@ -49,6 +49,7 @@ The test ROMs run on every push, on GCC and Clang, and again under AddressSaniti
 | [dmg-acid2](https://github.com/mattcurrie/dmg-acid2) (PPU) | ✅ pixel-identical to the reference, natively and in the WebAssembly build |
 | [mooneye test suite](https://github.com/Gekkio/mooneye-test-suite): every `acceptance` and `emulator-only` test that applies to the DMG (94) | ✅ all pass: CPU and interrupt timing, timer, OAM DMA, PPU timing, serial, boot state, MBC1/2/5 |
 | mooneye `manual-only/sprite_priority` | ✅ pixel-identical to the reference |
+| [mealybug tearoom tests](https://github.com/mattcurrie/mealybug-tearoom-tests) (registers changed mid-line, DMG) | ⚠️ 3 of 24 pixel-identical (`m3_bgp_change`, `m3_scx_low_3_bits`, `m2_win_en_toggle`); in the rest most pixels match, with differences in the exact dot where some fetches, window restarts and sprite stalls happen |
 | Blargg `oam_bug` (combined ROM, all 8) | ✅ pass |
 
 The mooneye tests for other models (SGB, MGB, CGB, AGB and the first DMG revision) are skipped. The ROMs are not in
@@ -106,7 +107,7 @@ build/mattone-run --mooneye acceptance/div_timing.gb          # pass/fail of a m
 
 static gb_t gb;                     /* about 175 KB, so not on the stack */
 gb_load(&gb, rom, rom_size);        /* GB_OK, or GB_ERR_SIZE / GB_ERR_CART / GB_ERR_HEADER */
-gb_set_sample_rate(&gb, 48000);     /* optional: sound costs about 17% more time */
+gb_set_sample_rate(&gb, 48000);     /* optional: sound costs about 15% more time */
 for (;;) {
     gb_set_buttons(&gb, GB_A | GB_RIGHT);
     gb_run_frame(&gb);              /* 70224 cycles */
@@ -122,8 +123,8 @@ for (;;) {
 
 | Build | Without sound | With sound (48 kHz) |
 | --- | --- | --- |
-| native, GCC 13 `-O2` | ~1,720 fps (~29× real time) | ~1,470 fps (~25×) |
-| WebAssembly in Node 24 | ~1,080 fps (~18×) | ~940 fps (~16×) |
+| native, GCC 13 `-O2` | ~1,090 fps (~18× real time) | ~950 fps (~16×) |
+| WebAssembly in Node 24 | ~700 fps (~12×) | ~650 fps (~11×) |
 
 ## Layout
 
@@ -131,7 +132,7 @@ for (;;) {
 src/gb.h         public API
 src/cpu.c        SM83 instructions and interrupt dispatch
 src/bus.c        memory map, I/O registers, timer, OAM DMA, the clock
-src/ppu.c        scanline renderer and LCD timing
+src/ppu.c        pixel FIFO renderer, LCD timing, OAM corruption bug
 src/apu.c        the four sound channels, frame sequencer and mixer
 src/cart.c       memory bank controllers and the MBC3 clock
 src/cli.c        mattone-run

@@ -242,12 +242,37 @@ void gb_write(gb_t *g, uint16_t addr, uint8_t v) {
         g->io[R_LYC] = v;
         ppu_update_stat(g);
         break;
+    case R_BGP: case R_OBP0: case R_OBP1: ppu_palette_write(g, reg, v); break;
     case R_DMA:
         g->io[R_DMA] = v;
         g->dma_next = (uint16_t)(v << 8);
         g->dma_start = 2;
         break;
     }
+}
+
+/* The DMG boot ROM leaves the scrolled-in logo in VRAM: the cartridge's logo
+ * bitmap with every pixel doubled (tiles 1-24), the (R) mark (tile 25) and the
+ * map entries that showed them. Some programs and tests draw these tiles. */
+static void boot_vram(gb_t *g) {
+    static const uint8_t mark[8] = {0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C};
+    uint8_t *tile = &g->vram[0x10];
+    for (int i = 0; i < 48; i++) {
+        uint8_t b = g->rom[0x104 + i];
+        for (int half = 0; half < 2; half++) {
+            uint8_t nibble = half ? b & 0x0F : b >> 4, wide = 0;
+            for (int bit = 3; bit >= 0; bit--) wide = (uint8_t)(wide << 2 | ((nibble >> bit) & 1) * 3);
+            tile[0] = wide; /* two rows, low bitplane only */
+            tile[2] = wide;
+            tile += 4;
+        }
+    }
+    for (int i = 0; i < 8; i++) g->vram[0x190 + i * 2] = mark[i];
+    for (int i = 0; i < 12; i++) {
+        g->vram[0x1904 + i] = (uint8_t)(1 + i);
+        g->vram[0x1924 + i] = (uint8_t)(13 + i);
+    }
+    g->vram[0x1910] = 0x19;
 }
 
 int gb_load(gb_t *g, const uint8_t *rom, size_t size) {
@@ -280,6 +305,7 @@ int gb_load(gb_t *g, const uint8_t *rom, size_t size) {
     g->io[R_BGP] = 0xFC;
     g->io[R_OBP0] = 0xFF;
     g->io[R_OBP1] = 0xFF;
+    boot_vram(g);
     ppu_reset(g);
     apu_reset(g);
     return GB_OK;
