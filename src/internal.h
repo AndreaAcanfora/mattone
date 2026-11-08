@@ -49,6 +49,13 @@ void ppu_tick(gb_t *gb);
 void ppu_write_lcdc(gb_t *gb, uint8_t value);
 void ppu_update_stat(gb_t *gb);
 
+/* apu.c */
+void apu_reset(gb_t *gb);
+void apu_tick(gb_t *gb);
+void apu_frame_sequencer(gb_t *gb);
+uint8_t apu_read(gb_t *gb, uint8_t reg);
+void apu_write(gb_t *gb, uint8_t reg, uint8_t value);
+
 /* cart.c */
 int cart_init(gb_t *gb);
 uint8_t cart_read(gb_t *gb, uint16_t addr);

@@ -1,7 +1,7 @@
 /* mattone-run: runs a ROM without a window, for tests and screenshots.
  *
  *   mattone-run [--frames N] [--serial] [--until TEXT] [--screenshot FILE.pgm]
- *               [--input FILE] [--dump DIR] ROM
+ *               [--input FILE] [--dump DIR] [--wav FILE.wav] ROM
  *
  * --serial prints the text the ROM reports: what it sent through the link
  * port, or, for test ROMs that use Blargg's memory protocol (signature
@@ -10,6 +10,7 @@
  * --input reads lines "FRAME BUTTONS": from that frame on the buttons
  * (comma-separated: up,down,left,right,a,b,start,select, or "-" for none)
  * are held. --dump writes every frame to DIR/00000.pgm, DIR/00001.pgm...
+ * --wav records the sound as 48 kHz 16-bit stereo.
  * The exit status is 0 unless loading fails, or --until was given and TEXT
  * never appeared. */
 #include <stdio.h>
@@ -58,6 +59,34 @@ static const unsigned char *output(const gb_t *gb, size_t *len) {
     return gb->serial;
 }
 
+#define WAV_RATE 48000
+
+static void put32(unsigned char *p, uint32_t v) {
+    for (int i = 0; i < 4; i++) p[i] = (unsigned char)(v >> (8 * i));
+}
+
+/* Writes the RIFF header for frames stereo 16-bit frames at WAV_RATE. */
+static void wav_header(FILE *f, uint32_t frames) {
+    unsigned char h[44] = "RIFF....WAVEfmt \x10\0\0\0\x01\0\x02\0........\x04\0\x10\0data....";
+    put32(h + 4, 36 + frames * 4);
+    put32(h + 24, WAV_RATE);
+    put32(h + 28, WAV_RATE * 4);
+    put32(h + 40, frames * 4);
+    fseek(f, 0, SEEK_SET);
+    fwrite(h, 1, sizeof h, f);
+}
+
+static void wav_append(gb_t *gb, FILE *f, uint32_t *frames) {
+    int16_t buf[GB_AUDIO_MAX * 2];
+    size_t n = gb_audio_take(gb, buf, GB_AUDIO_MAX);
+    for (size_t i = 0; i < n * 2; i++) {
+        uint16_t v = (uint16_t)buf[i];
+        fputc(v & 0xFF, f);
+        fputc(v >> 8, f);
+    }
+    *frames += (uint32_t)n;
+}
+
 static int contains(const gb_t *gb, const char *text) {
     size_t len, n = strlen(text);
     const unsigned char *out = output(gb, &len);
@@ -91,14 +120,14 @@ static int read_inputs(const char *path) {
 
 static void usage(void) {
     fputs("usage: mattone-run [--frames N] [--serial] [--until TEXT] [--screenshot FILE.pgm]\n"
-          "                   [--input FILE] [--dump DIR] ROM\n", stderr);
+          "                   [--input FILE] [--dump DIR] [--wav FILE.wav] ROM\n", stderr);
     exit(2);
 }
 
 int main(int argc, char **argv) {
     long frames = 600;
     int serial = 0;
-    const char *until = NULL, *shot = NULL, *rom_path = NULL, *dump = NULL;
+    const char *until = NULL, *shot = NULL, *rom_path = NULL, *dump = NULL, *wav_path = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = strtol(argv[++i], NULL, 10);
@@ -106,6 +135,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--until") && i + 1 < argc) until = argv[++i];
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) shot = argv[++i];
         else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dump = argv[++i];
+        else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wav_path = argv[++i];
         else if (!strcmp(argv[i], "--input") && i + 1 < argc) {
             if (read_inputs(argv[++i])) {
                 perror(argv[i]);
@@ -132,11 +162,23 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    FILE *wav = NULL;
+    uint32_t wav_frames = 0;
+    if (wav_path) {
+        if (!(wav = fopen(wav_path, "wb"))) {
+            perror(wav_path);
+            return 1;
+        }
+        wav_header(wav, 0);
+        gb_set_sample_rate(&gb, WAV_RATE);
+    }
+
     int found = 0, next_input = 0;
     for (long f = 0; f < frames && !found; f++) {
         while (next_input < input_count && inputs[next_input].frame <= f)
             gb_set_buttons(&gb, inputs[next_input++].buttons);
         gb_run_frame(&gb);
+        if (wav) wav_append(&gb, wav, &wav_frames);
         if (until) found = contains(&gb, until);
         if (dump) {
             char path[4096];
@@ -153,6 +195,13 @@ int main(int argc, char **argv) {
         const unsigned char *out = output(&gb, &len);
         fwrite(out, 1, len, stdout);
         if (len && out[len - 1] != '\n') putchar('\n');
+    }
+    if (wav) {
+        wav_header(wav, wav_frames);
+        if (fclose(wav)) {
+            perror(wav_path);
+            return 1;
+        }
     }
     if (shot && write_pgm(&gb, shot)) {
         perror(shot);

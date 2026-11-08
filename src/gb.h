@@ -14,6 +14,7 @@
 #define GB_CYCLES_PER_FRAME 70224 /* T-cycles: 154 lines * 456 dots */
 #define GB_CART_RAM_MAX 0x20000
 #define GB_SERIAL_MAX 4096
+#define GB_AUDIO_MAX 4096 /* stereo sample frames buffered between gb_audio_take() calls */
 
 /* Bits for gb_set_buttons(): set = pressed. */
 enum {
@@ -34,6 +35,28 @@ enum {
     GB_ERR_CART = -2,     /* unsupported cartridge type */
     GB_ERR_HEADER = -3,   /* bad header checksum: the boot ROM would refuse it */
 };
+
+typedef struct {
+    uint8_t enabled, dac;
+    uint16_t length;
+    uint8_t volume, env_timer;
+    int32_t timer; /* T-cycles until the next waveform step */
+    uint8_t duty_pos;
+    uint16_t shadow; /* square 1: sweep */
+    uint8_t sweep_timer, sweep_enabled, sweep_negated;
+    uint8_t wave_pos, sample; /* wave */
+    uint16_t lfsr;            /* noise */
+} gb_channel;
+
+typedef struct {
+    uint8_t power, fs_step, wave_read, dirty; /* dirty: mix_left/right need recomputing */
+    gb_channel ch[4];
+    uint32_t sample_rate, sample_clock;
+    int32_t mix_left, mix_right, acc_left, acc_right;
+    float cap_left, cap_right, charge;
+    uint32_t acc_count, audio_len;
+    int16_t audio[GB_AUDIO_MAX * 2]; /* interleaved left, right */
+} gb_apu;
 
 typedef struct gb {
     /* CPU */
@@ -74,6 +97,8 @@ typedef struct gb {
     uint8_t dma_active, dma_index, dma_delay;
     uint16_t dma_source;
 
+    gb_apu apu;
+
     /* joypad and serial */
     uint8_t buttons;
     uint32_t serial_len;
@@ -95,6 +120,15 @@ int gb_step(gb_t *gb);
 void gb_run_frame(gb_t *gb);
 
 void gb_set_buttons(gb_t *gb, uint8_t pressed);
+
+/* Turns on audio output at the given sample rate (0 = off, the default after
+ * gb_load). Samples are signed 16-bit stereo. */
+void gb_set_sample_rate(gb_t *gb, uint32_t rate);
+
+/* Moves up to max_frames buffered stereo frames into out (2 * max_frames
+ * values) and returns how many were moved. Call it every frame: once
+ * GB_AUDIO_MAX frames are waiting, new samples are dropped. */
+size_t gb_audio_take(gb_t *gb, int16_t *out, size_t max_frames);
 
 /* The cartridge title from the header, NUL terminated, max 16 chars. */
 void gb_title(const gb_t *gb, char out[17]);
