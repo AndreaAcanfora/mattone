@@ -9,9 +9,16 @@ cd roms
 
 fetch() { # url file sha256
     if [ -f "$2" ] && echo "$3  $2" | sha256sum -c --status; then return; fi
-    curl -fsSL --retry 6 --retry-delay 10 -o "$2.tmp" "$1"
-    echo "$3  $2.tmp" | sha256sum -c --quiet
-    mv "$2.tmp" "$2"
+    # Release assets come through the API (the github.com download links
+    # have been unreliable); GITHUB_TOKEN, when set, avoids its rate limit.
+    set -- "$1" "$2" "$3" -H "Accept: application/octet-stream"
+    if [ -n "${GITHUB_TOKEN:-}" ]; then set -- "$@" -H "Authorization: Bearer $GITHUB_TOKEN"; fi
+    url=$1 file=$2 sum=$3
+    shift 3
+    case "$url" in https://api.github.com/*) ;; *) set -- ;; esac
+    curl -fsSL --retry 6 --retry-delay 10 "$@" -o "$file.tmp" "$url"
+    echo "$sum  $file.tmp" | sha256sum -c --quiet
+    mv "$file.tmp" "$file"
 }
 
 BLARGG=c240dd7d700e5c0b00a7bbba52b53e4ee67b5f15
@@ -23,7 +30,8 @@ if [ ! -d blargg ]; then
 fi
 
 ACID=8a98ce731f96dde032ffb22ec36dc985d78fdb18
-fetch https://github.com/mattcurrie/dmg-acid2/releases/download/v1.0/dmg-acid2.gb dmg-acid2.gb \
+# dmg-acid2 v1.0 release asset
+fetch https://api.github.com/repos/mattcurrie/dmg-acid2/releases/assets/19942984 dmg-acid2.gb \
     464e14b7d42e7feea0b7ede42be7071dc88913f75b9ffa444299424b63d1dff1
 fetch "https://raw.githubusercontent.com/mattcurrie/dmg-acid2/$ACID/img/reference-dmg.png" dmg-acid2.png \
     ca966d50895c7efef05838590d148c2cbfd7fba57dab986f25b35b4da71abb57
