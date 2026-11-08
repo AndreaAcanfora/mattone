@@ -74,7 +74,9 @@ typedef struct {
     struct { uint8_t x, color, pal, valid; } lcd[4]; /* pixels on their way to the LCD, by dot */
     uint8_t lcd_t, lcd_count;
     uint8_t lcd_just_on;            /* line 0 is the first after switching the LCD on */
-    uint8_t startup, sprite_seen, window_start, window_skip;
+    uint8_t startup, sprite_seen, window_start, window_skip, fetched_first;
+    uint8_t drawing, early_hblank;  /* mode 3 pipeline running; STAT already shows mode 0 */
+    uint8_t hblank_in;              /* dots until STAT shows mode 0, on lines with sprites */
     int16_t last_tile;              /* for sprite penalties: last tile a sprite waited on */
     uint8_t pal_glitch[3], glitch_dots; /* old BGP/OBP0/OBP1 values ORed in after a write */
 } gb_fifo;
