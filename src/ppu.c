@@ -150,9 +150,12 @@ static void render_line(gb_t *g) {
     }
 }
 
-static void ppu_dot(gb_t *g) {
+/* Advances one M-cycle (4 dots). Every boundary (80, 252, 456) is a multiple
+ * of 4, so checking once per M-cycle sees each of them exactly. */
+void ppu_tick(gb_t *g) {
+    if (!(g->io[R_LCDC] & 0x80)) return;
     int ly = g->io[R_LY];
-    g->dot++;
+    g->dot += 4;
     if (ly < GB_HEIGHT) {
         if (g->dot == DRAW_START) {
             set_mode(g, MODE_DRAW);
@@ -177,9 +180,4 @@ static void ppu_dot(gb_t *g) {
     if (ly < GB_HEIGHT) set_mode(g, MODE_OAM);
     g->io[R_LY] = (uint8_t)ly;
     ppu_update_stat(g);
-}
-
-void ppu_tick(gb_t *g) {
-    if (!(g->io[R_LCDC] & 0x80)) return;
-    for (int i = 0; i < 4; i++) ppu_dot(g);
 }

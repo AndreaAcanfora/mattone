@@ -11,6 +11,7 @@ static uint8_t rom[ROM_MAX];
 static uint32_t screen[GB_HEIGHT * GB_WIDTH];
 static uint32_t palette[4] = {0xFFFFFFFF, 0xFFAAAAAA, 0xFF555555, 0xFF000000}; /* ABGR in memory: RGBA bytes */
 static char title[17];
+static int16_t audio[GB_AUDIO_MAX * 2];
 
 EXPORT("rom_buffer") uint8_t *rom_buffer(void) { return rom; }
 EXPORT("rom_capacity") uint32_t rom_capacity(void) { return ROM_MAX; }
@@ -36,6 +37,13 @@ EXPORT("screen") uint32_t *screen_ptr(void) { return screen; }
 EXPORT("palette") uint32_t *palette_ptr(void) { return palette; }
 EXPORT("set_buttons") void set_buttons(uint32_t pressed) { gb_set_buttons(&gb, (uint8_t)pressed); }
 EXPORT("title") const char *title_ptr(void) { return title; }
+
+/* Sound: after set_sample_rate(), each audio_take() moves the samples made
+ * since the last call into audio_buffer() (interleaved 16-bit stereo) and
+ * returns how many stereo frames it moved. */
+EXPORT("set_sample_rate") void set_sample_rate(uint32_t rate) { gb_set_sample_rate(&gb, rate); }
+EXPORT("audio_buffer") int16_t *audio_buffer(void) { return audio; }
+EXPORT("audio_take") uint32_t audio_take(void) { return (uint32_t)gb_audio_take(&gb, audio, GB_AUDIO_MAX); }
 
 /* Battery-backed cartridge RAM, so the page can keep saves in localStorage. */
 EXPORT("save_ram") uint8_t *save_ram(void) { return gb.cart_ram; }

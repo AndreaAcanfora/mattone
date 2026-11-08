@@ -2,7 +2,7 @@ CC ?= cc
 CFLAGS ?= -O2
 CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Wshadow
 
-CORE = src/cpu.c src/bus.c src/ppu.c src/cart.c
+CORE = src/cpu.c src/bus.c src/ppu.c src/apu.c src/cart.c
 HEADERS = src/gb.h src/internal.h
 
 .PHONY: all test roms clean

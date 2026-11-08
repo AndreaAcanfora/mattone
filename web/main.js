@@ -29,6 +29,8 @@ let savedCopy = null;
 let paused = false;
 let turbo = false;
 let held = 0; // buttons from keyboard and touch
+let audio = null; // { ctx, next } once the browser lets us play sound
+let muted = localStorage.getItem("mattone:muted") === "1";
 const pointerButtons = new Map();
 
 async function loadWasm(url) {
@@ -70,6 +72,7 @@ function insert(bytes, label) {
     return false;
   }
   romBytes = bytes;
+  applySampleRate();
   const title = readTitle() || label;
   titleEl.textContent = title;
   document.title = `${title} · mattone`;
@@ -133,6 +136,57 @@ async function openFile(file) {
   }
 }
 
+// ---------- sound ----------
+
+// Browsers only allow audio after a click or key press.
+function startAudio() {
+  if (audio || muted) return;
+  const ctx = new AudioContext({ latencyHint: "interactive" });
+  audio = { ctx, next: 0 };
+  applySampleRate();
+}
+
+function applySampleRate() {
+  wasm.set_sample_rate(audio && !muted ? audio.ctx.sampleRate : 0);
+}
+
+function playAudio() {
+  const frames = wasm.audio_take();
+  if (!frames || !audio || turbo) return;
+  const { ctx } = audio;
+  const pcm = new Int16Array(wasm.memory.buffer, wasm.audio_buffer(), frames * 2);
+  const buffer = ctx.createBuffer(2, frames, ctx.sampleRate);
+  const left = buffer.getChannelData(0);
+  const right = buffer.getChannelData(1);
+  for (let i = 0; i < frames; i++) {
+    left[i] = pcm[i * 2] / 32768;
+    right[i] = pcm[i * 2 + 1] / 32768;
+  }
+  // Queue the chunks back to back, restarting the queue if it ran dry or
+  // drifted too far ahead of the clock.
+  const now = ctx.currentTime;
+  if (audio.next < now + 0.01 || audio.next > now + 0.25) audio.next = now + 0.05;
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  source.start(audio.next);
+  audio.next += frames / ctx.sampleRate;
+}
+
+function setMuted(on) {
+  muted = on;
+  localStorage.setItem("mattone:muted", on ? "1" : "0");
+  soundBtn.textContent = on ? "🔇" : "🔊";
+  soundBtn.classList.toggle("active", on);
+  if (!on) startAudio();
+  if (audio) on ? audio.ctx.suspend() : audio.ctx.resume();
+  applySampleRate();
+}
+
+for (const type of ["pointerdown", "keydown"]) {
+  addEventListener(type, () => audio ? audio.ctx.resume() : startAudio(), { capture: true });
+}
+
 // ---------- screen ----------
 
 function setPalette(name) {
@@ -175,7 +229,10 @@ function loop(now) {
       debt -= FRAME_MS;
       ran++;
     }
-    if (ran) draw();
+    if (ran) {
+      draw();
+      playAudio();
+    }
     fpsFrames += ran;
   }
   if (now - fpsStart >= 1000) {
@@ -203,6 +260,8 @@ addEventListener("keydown", (e) => {
   } else if (e.code === "Space") {
     e.preventDefault();
     setTurbo(true);
+  } else if (e.code === "KeyM" && !e.repeat) {
+    setMuted(!muted);
   } else if (e.code === "KeyP" && !e.repeat) {
     togglePause();
   } else if (e.code === "KeyR" && !e.repeat && romBytes) {
@@ -256,6 +315,7 @@ pad.addEventListener("contextmenu", (e) => e.preventDefault());
 
 const pauseBtn = document.getElementById("pause");
 const turboBtn = document.getElementById("turbo");
+const soundBtn = document.getElementById("sound");
 
 function togglePause() {
   paused = !paused;
@@ -270,6 +330,9 @@ function setTurbo(on) {
 }
 
 pauseBtn.addEventListener("click", togglePause);
+soundBtn.addEventListener("click", () => setMuted(!muted));
+soundBtn.textContent = muted ? "🔇" : "🔊";
+soundBtn.classList.toggle("active", muted);
 turboBtn.addEventListener("click", () => setTurbo(!turbo));
 document.getElementById("reset").addEventListener("click", () => romBytes && insert(romBytes, titleEl.textContent));
 document.getElementById("demo").addEventListener("click", playDemo);

@@ -38,6 +38,8 @@ static void tima_increment(gb_t *g) {
 /* Changing DIV or TAC can drop the timer signal, which counts as a tick. */
 static void timer_set(gb_t *g, uint16_t sysclk, uint8_t tac) {
     int before = timer_signal(g);
+    /* The APU frame sequencer steps on a falling edge of DIV bit 4. */
+    if ((g->sysclk & 0x1000) && !(sysclk & 0x1000)) apu_frame_sequencer(g);
     g->sysclk = sysclk;
     g->io[R_TAC] = tac;
     if (before && !timer_signal(g)) tima_increment(g);
@@ -52,8 +54,10 @@ static void timer_tick(gb_t *g) {
         g->io[R_IF] |= INT_TIMER;
     }
     int before = timer_signal(g);
+    uint16_t old = g->sysclk;
     g->sysclk += 4;
     if (before && !timer_signal(g)) tima_increment(g);
+    if ((old & 0x1000) && !(g->sysclk & 0x1000)) apu_frame_sequencer(g);
 }
 
 static void dma_tick(gb_t *g) {
@@ -73,6 +77,7 @@ void gb_tick(gb_t *g) {
     timer_tick(g);
     dma_tick(g);
     ppu_tick(g);
+    apu_tick(g);
     cart_tick(g);
 }
 
@@ -103,6 +108,10 @@ uint8_t gb_read(gb_t *g, uint16_t addr) {
     case R_P1: return joypad_read(g);
     case R_DIV: return g->sysclk >> 8;
     case R_LY: return (g->io[R_LCDC] & 0x80) ? g->io[R_LY] : 0;
+    case 0x26: return apu_read(g, reg);
+    case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35: case 0x36: case 0x37:
+    case 0x38: case 0x39: case 0x3A: case 0x3B: case 0x3C: case 0x3D: case 0x3E: case 0x3F:
+        return apu_read(g, reg);
     default: return g->io[reg] | io_mask[reg];
     }
 }
@@ -155,6 +164,10 @@ void gb_write(gb_t *g, uint16_t addr, uint8_t v) {
         ppu_update_stat(g);
         break;
     case R_LY: break;
+    default:
+        if (reg >= 0x10 && reg < 0x40) apu_write(g, reg, v);
+        else g->io[reg] = v;
+        break;
     case R_LYC:
         g->io[R_LYC] = v;
         ppu_update_stat(g);
@@ -166,7 +179,6 @@ void gb_write(gb_t *g, uint16_t addr, uint8_t v) {
         g->dma_delay = 1;
         g->dma_active = 1;
         break;
-    default: g->io[reg] = v; break;
     }
 }
 
@@ -201,6 +213,7 @@ int gb_load(gb_t *g, const uint8_t *rom, size_t size) {
     g->io[R_OBP0] = 0xFF;
     g->io[R_OBP1] = 0xFF;
     ppu_reset(g);
+    apu_reset(g);
     return GB_OK;
 }
 

@@ -33,6 +33,10 @@ blargg mem_timing/mem_timing.gb
 blargg mem_timing-2/mem_timing.gb
 echo "HALT"
 screen halt_bug "$B/halt_bug.gb" tests/expected/halt_bug.png 300
+echo "Sound"
+for rom in "$B"/dmg_sound/rom_singles/*.gb; do blargg "dmg_sound/rom_singles/$(basename "$rom")"; done
+blargg dmg_sound/dmg_sound.gb
+python3 tests/tone-test.py "$RUN" || failed=$((failed + 1))
 echo "PPU"
 screen dmg-acid2 tests/roms/dmg-acid2.gb tests/roms/dmg-acid2.png 60
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <title>mattone · a Game Boy emulator in C + WebAssembly</title>
-  <meta name="description" content="A Game Boy emulator written in C and compiled to a 16 KB WebAssembly module. Play homebrew games or load your own .gb file.">
+  <meta name="description" content="A Game Boy emulator written in C and compiled to a 21 KB WebAssembly module, with sound. Play homebrew games or load your own .gb file.">
   <meta name="theme-color" content="#10121a">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
@@ -43,8 +43,9 @@
       </div>
       <div class="group">
         <button id="pause" title="Pause (P)">❚❚</button>
-        <button id="turbo" title="Fast forward (hold Space)">⏩</button>
+        <button id="turbo" title="Fast forward, muted (hold Space)">⏩</button>
         <button id="reset" title="Reset (R)">⟲</button>
+        <button id="sound" title="Sound on/off (M)">🔊</button>
       </div>
       <div class="group" role="radiogroup" aria-label="Colours">
         <select id="palette" title="Screen colours">
@@ -54,14 +55,13 @@
         </select>
       </div>
       <div id="stats" aria-live="off"></div>
-      <p id="keys">Arrows · <kbd>X</kbd> A · <kbd>Z</kbd> B · <kbd>Enter</kbd> Start · <kbd>Shift</kbd> Select · hold <kbd>Space</kbd> to fast forward</p>
+      <p id="keys">Arrows · <kbd>X</kbd> A · <kbd>Z</kbd> B · <kbd>Enter</kbd> Start · <kbd>Shift</kbd> Select · <kbd>M</kbd> sound · hold <kbd>Space</kbd> to fast forward</p>
     </nav>
 
     <footer>
       <a href="https://github.com/AndreaAcanfora/mattone">Source on GitHub</a> ·
       Demo game: <a href="https://github.com/SimonLarsen/tobutobugirl">Tobu Tobu Girl</a> by Tangram Games
-      (code MIT, assets <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>) ·
-      No sound yet
+      (code MIT, assets <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>)
     </footer>
   </main>
   <div id="toast" role="status"></div>
