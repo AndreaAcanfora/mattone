@@ -53,7 +53,7 @@ The test ROMs run on every push, on GCC and Clang, and again under AddressSaniti
 | [mooneye test suite](https://github.com/Gekkio/mooneye-test-suite): every `acceptance` and `emulator-only` test that applies to the DMG (94) | ✅ all pass: CPU and interrupt timing, timer, OAM DMA, PPU timing, serial, boot state, MBC1/2/5 |
 | mooneye on a CGB in compatibility mode: every test that applies to the CGB (86, including the CGB-only `misc` boot and PPU tests) | ✅ all pass |
 | mooneye `manual-only/sprite_priority` | ✅ pixel-identical to the reference |
-| [mealybug tearoom tests](https://github.com/mattcurrie/mealybug-tearoom-tests) (registers changed mid-line, DMG) | ⚠️ 5 of 24 pixel-identical (`m3_bgp_change`, `m3_bgp_change_sprites`, `m3_obp0_change`, `m3_scx_low_3_bits`, `m2_win_en_toggle`); in the rest most pixels match, with differences in the exact dot where some fetches, window restarts and stalls for sprites partly off the left edge happen |
+| [mealybug tearoom tests](https://github.com/mattcurrie/mealybug-tearoom-tests) (registers changed mid-line, DMG) | ⚠️ 6 of 24 pixel-identical (`m3_bgp_change`, `m3_bgp_change_sprites`, `m3_lcdc_win_en_change_multiple`, `m3_obp0_change`, `m3_scx_low_3_bits`, `m2_win_en_toggle`); in the rest most pixels match, with differences in the exact dot of some fetches, of window restarts with WX < 7 and of stalls for sprites partly off the left edge |
 | Blargg `oam_bug` (combined ROM, all 8) | ✅ pass |
 
 The mooneye tests for other models (SGB, MGB, AGB and the first DMG and CGB revisions) are skipped. The ROMs are not in
