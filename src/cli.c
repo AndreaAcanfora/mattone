@@ -48,6 +48,25 @@ static int write_pgm(const gb_t *gb, const char *path) {
     return fclose(f);
 }
 
+/* Everything sent through the link port, moved out of gb->serial each frame. */
+static unsigned char *link_out;
+static size_t link_len, link_cap;
+
+static void drain_serial(gb_t *gb) {
+    if (!gb->serial_len) return;
+    if (link_len + gb->serial_len > link_cap) {
+        link_cap = (link_len + gb->serial_len) * 2;
+        link_out = realloc(link_out, link_cap);
+        if (!link_out) {
+            perror("realloc");
+            exit(1);
+        }
+    }
+    memcpy(link_out + link_len, gb->serial, gb->serial_len);
+    link_len += gb->serial_len;
+    gb->serial_len = 0;
+}
+
 /* The ROM's report: link-port bytes, or the NUL-terminated text at $A004. */
 static const unsigned char *output(const gb_t *gb, size_t *len) {
     const unsigned char *ram = gb->cart_ram;
@@ -57,8 +76,8 @@ static const unsigned char *output(const gb_t *gb, size_t *len) {
         *len = n;
         return ram + 4;
     }
-    *len = gb->serial_len;
-    return gb->serial;
+    *len = link_len;
+    return link_out;
 }
 
 #define WAV_RATE 48000
@@ -181,6 +200,7 @@ int main(int argc, char **argv) {
         while (next_input < input_count && inputs[next_input].frame <= f)
             gb_set_buttons(&gb, inputs[next_input++].buttons);
         gb_run_frame(&gb);
+        drain_serial(&gb);
         if (wav) wav_append(&gb, wav, &wav_frames);
         if (until) found = contains(&gb, until);
         if (mooneye && gb.breakpoint) break;

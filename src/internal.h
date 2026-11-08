@@ -49,6 +49,8 @@ void ppu_reset(gb_t *gb);
 void ppu_tick(gb_t *gb);
 void ppu_write_lcdc(gb_t *gb, uint8_t value);
 void ppu_update_stat(gb_t *gb);
+enum { OAM_BUG_READ, OAM_BUG_WRITE, OAM_BUG_IDU_DURING_READ };
+void ppu_oam_bug(gb_t *gb, int kind);
 
 /* apu.c */
 void apu_reset(gb_t *gb);

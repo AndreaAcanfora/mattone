@@ -23,6 +23,26 @@ static void wr(gb_t *g, uint16_t addr, uint8_t v) {
     ppu_tick(g);
 }
 
+static int in_oam(uint16_t v) { return v >= 0xFE00 && v < 0xFF00; }
+
+/* An M-cycle in which the 16-bit incrementer works on a register: its value
+ * goes out on the address bus, which on the DMG can corrupt OAM. */
+static void idu_tick(gb_t *g, uint16_t value) {
+    gb_tick_early(g);
+    if (in_oam(value)) ppu_oam_bug(g, OAM_BUG_WRITE);
+    ppu_tick(g);
+}
+
+/* A read through a register that is incremented in the same M-cycle
+ * (LD A,(HL+), LD A,(HL-), POP). */
+static uint8_t rd_idu(gb_t *g, uint16_t addr) {
+    gb_tick_early(g);
+    if (in_oam(addr)) ppu_oam_bug(g, OAM_BUG_IDU_DURING_READ); /* gb_read adds the read corruption */
+    uint8_t v = gb_read(g, addr);
+    ppu_tick(g);
+    return v;
+}
+
 static uint8_t fetch(gb_t *g) {
     uint8_t v = rd(g, g->pc);
     if (g->halt_bug)
@@ -85,13 +105,13 @@ static void set_r(gb_t *g, int i, uint8_t v) {
 }
 
 static void push(gb_t *g, uint16_t v) {
-    gb_tick(g);
+    idu_tick(g, g->sp);
     wr(g, --g->sp, v >> 8);
     wr(g, --g->sp, v & 0xFF);
 }
 
 static uint16_t pop(gb_t *g) {
-    uint8_t lo = rd(g, g->sp++);
+    uint8_t lo = rd_idu(g, g->sp++);
     return (uint16_t)(lo | rd(g, g->sp++) << 8);
 }
 
@@ -249,14 +269,14 @@ static void exec(gb_t *g, uint8_t op) {
     case 0x32: wr(g, hl(g), g->a); set_hl(g, hl(g) - 1); break;
     case 0x0A: g->a = rd(g, get_rr(g, 0)); break;
     case 0x1A: g->a = rd(g, get_rr(g, 1)); break;
-    case 0x2A: g->a = rd(g, hl(g)); set_hl(g, hl(g) + 1); break;
-    case 0x3A: g->a = rd(g, hl(g)); set_hl(g, hl(g) - 1); break;
+    case 0x2A: g->a = rd_idu(g, hl(g)); set_hl(g, hl(g) + 1); break;
+    case 0x3A: g->a = rd_idu(g, hl(g)); set_hl(g, hl(g) - 1); break;
     case 0x03: case 0x13: case 0x23: case 0x33: /* INC rr */
-        gb_tick(g);
+        idu_tick(g, get_rr(g, p));
         set_rr(g, p, get_rr(g, p) + 1);
         break;
     case 0x0B: case 0x1B: case 0x2B: case 0x3B: /* DEC rr */
-        gb_tick(g);
+        idu_tick(g, get_rr(g, p));
         set_rr(g, p, get_rr(g, p) - 1);
         break;
     case 0x04: case 0x0C: case 0x14: case 0x1C: case 0x24: case 0x2C: case 0x34: case 0x3C: { /* INC r */
@@ -372,7 +392,7 @@ static void exec(gb_t *g, uint8_t op) {
 static void dispatch_interrupt(gb_t *g) {
     g->ime = 0;
     gb_tick(g);
-    gb_tick(g);
+    idu_tick(g, g->sp);
     wr(g, --g->sp, g->pc >> 8);
     /* Pushing the high byte can overwrite IE, which changes the target. */
     uint8_t pending = g->ie & g->io[R_IF] & 0x1F;

@@ -156,6 +156,7 @@ static int oam_write_busy(const gb_t *g) {
 
 uint8_t gb_read(gb_t *g, uint16_t addr) {
     if (dma_conflict(g, addr)) return g->dma_byte;
+    if (addr >= 0xFE00 && addr < 0xFF00) ppu_oam_bug(g, OAM_BUG_READ);
     return read_raw(g, addr);
 }
 
@@ -194,6 +195,7 @@ void gb_write(gb_t *g, uint16_t addr, uint8_t v) {
     }
     if (addr < 0xC000) { cart_write(g, addr, v); return; }
     if (addr < 0xFE00) { g->wram[addr & 0x1FFF] = v; return; }
+    if (addr < 0xFF00) ppu_oam_bug(g, OAM_BUG_WRITE); /* the address is >= 0xFE00 here */
     if (addr < 0xFEA0) {
         if (!g->dma_active && !oam_write_busy(g)) g->oam[addr - 0xFE00] = v;
         return;
