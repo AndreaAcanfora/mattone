@@ -107,7 +107,7 @@ build/mattone-run --mooneye acceptance/div_timing.gb          # pass/fail of a m
 
 static gb_t gb;                     /* about 175 KB, so not on the stack */
 gb_load(&gb, rom, rom_size);        /* GB_OK, or GB_ERR_SIZE / GB_ERR_CART / GB_ERR_HEADER */
-gb_set_sample_rate(&gb, 48000);     /* optional: sound costs about 17% more time */
+gb_set_sample_rate(&gb, 48000);     /* optional: sound costs about 15% more time */
 for (;;) {
     gb_set_buttons(&gb, GB_A | GB_RIGHT);
     gb_run_frame(&gb);              /* 70224 cycles */
