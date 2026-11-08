@@ -29,7 +29,7 @@ EXPORT("render") void render(void) {
     for (int y = 0; y < GB_HEIGHT; y++)
         for (int x = 0; x < GB_WIDTH; x++) {
             uint32_t v = gb.pixels[y][x];
-            if (!gb.cgb) {
+            if (!gb.cgb_hw) {
                 screen[y * GB_WIDTH + x] = palette[v & 3];
                 continue;
             }
@@ -41,7 +41,8 @@ EXPORT("render") void render(void) {
         }
 }
 
-EXPORT("is_cgb") uint32_t is_cgb(void) { return gb.cgb; }
+/* 1 when the screen is in colour: a CGB, in CGB or compatibility mode. */
+EXPORT("is_cgb") uint32_t is_cgb(void) { return gb.cgb_hw; }
 
 EXPORT("run_frame") void run_frame(void) {
     gb_run_frame(&gb);

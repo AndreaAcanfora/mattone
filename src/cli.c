@@ -45,11 +45,11 @@ static int write_screenshot(const gb_t *gb, const char *path) {
     static const unsigned char shade[4] = {0xFF, 0xAA, 0x55, 0x00};
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
-    fprintf(f, "%s\n%d %d\n255\n", gb->cgb ? "P6" : "P5", GB_WIDTH, GB_HEIGHT);
+    fprintf(f, "%s\n%d %d\n255\n", gb->cgb_hw ? "P6" : "P5", GB_WIDTH, GB_HEIGHT);
     for (int y = 0; y < GB_HEIGHT; y++)
         for (int x = 0; x < GB_WIDTH; x++) {
             unsigned v = gb->pixels[y][x];
-            if (!gb->cgb) {
+            if (!gb->cgb_hw) {
                 fputc(shade[v & 3], f);
                 continue;
             }
@@ -221,7 +221,7 @@ int main(int argc, char **argv) {
         if (mooneye && gb.breakpoint) break;
         if (dump) {
             char path[4096];
-            snprintf(path, sizeof path, "%s/%05ld.%s", dump, f, gb.cgb ? "ppm" : "pgm");
+            snprintf(path, sizeof path, "%s/%05ld.%s", dump, f, gb.cgb_hw ? "ppm" : "pgm");
             if (write_screenshot(&gb, path)) {
                 perror(path);
                 return 1;

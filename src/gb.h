@@ -123,8 +123,8 @@ typedef struct gb {
     gb_fifo fifo;
     uint8_t line; /* the line being drawn; LY changes slightly before it */
     uint8_t window_line, stat_line, frame_done;
-    /* DMG: shades 0 (white) .. 3 (black). CGB: colours as RGB555 (red in the
-     * low 5 bits, as in palette RAM). */
+    /* DMG: shades 0 (white) .. 3 (black). CGB (cgb_hw, in either mode):
+     * colours as RGB555 (red in the low 5 bits, as in palette RAM). */
     uint16_t pixels[GB_HEIGHT][GB_WIDTH];
     uint8_t bg_palette[64], obj_palette[64]; /* CGB palette RAM */
     uint8_t bcps, ocps;                      /* CGB palette RAM index (+ auto-increment) */

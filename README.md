@@ -32,7 +32,7 @@ Game: [Tobu Tobu Girl Deluxe](https://github.com/SimonLarsen/tobutobugirl-dx) by
 | **Cartridges** | ROM only, MBC1 (and MBC1M multicarts), MBC2, MBC3 with the real-time clock, MBC5; battery saves |
 | **Joypad, serial** | buttons with the joypad interrupt; the link port with nothing plugged in, clocked at 8192 Hz in step with the system clock |
 | **Sound** | both square channels (with sweep), wave and noise; length, envelope and sweep units on the 512 Hz frame sequencer; DMG quirks such as wave RAM access while playing; stereo panning and master volume; a high-pass filter like the real output capacitor |
-| **Game Boy Color** | CGB games run on a CGB: double speed, the second VRAM bank and eight WRAM banks, colour palette RAM, tile attributes (palette, bank, flips, priority), sprites from either bank with CGB priority by OAM index, general-purpose and H-blank VRAM DMA, the CGB's sound differences, the 2050 M-cycle pause of a speed switch. Original Game Boy games run on a DMG, or on a CGB in its compatibility mode (CGB timing, sound and boot state, DMG graphics; the colours are the DMG palette you pick, not the CGB boot ROM's colourisation) |
+| **Game Boy Color** | CGB games run on a CGB: double speed, the second VRAM bank and eight WRAM banks, colour palette RAM, tile attributes (palette, bank, flips, priority), sprites from either bank with CGB priority by OAM index, general-purpose and H-blank VRAM DMA, the CGB's sound differences, the 2050 M-cycle pause of a speed switch. Original Game Boy games run on a DMG, or on a CGB in its compatibility mode (CGB timing, sound and boot state, DMG graphics) with the colours the CGB boot ROM picks from the cartridge header: Nintendo titles get their own palettes, everything else the default set |
 
 ## Accuracy
 
@@ -46,6 +46,7 @@ The test ROMs run on every push, on GCC and Clang, and again under AddressSaniti
 | Blargg `halt_bug` | ✅ pass |
 | Blargg `dmg_sound` (all 12) | ✅ pass |
 | Blargg `cgb_sound` (all 12) | ✅ pass |
+| CGB colours for original Game Boy games ([tests/palette-test.c](tests/palette-test.c)) | ✅ default set, a Nintendo title, two titles told apart by their 4th letter |
 | A4 tone on each melodic channel ([tests/tone-test.py](tests/tone-test.py)) | ✅ 439.8 Hz measured in the recorded WAV, as the hardware formula predicts |
 | [dmg-acid2](https://github.com/mattcurrie/dmg-acid2) (PPU) | ✅ pixel-identical to the reference, natively and in the WebAssembly build |
 | [cgb-acid2](https://github.com/mattcurrie/cgb-acid2) (CGB PPU) | ✅ pixel-identical to the reference, natively and in the WebAssembly build |
@@ -76,7 +77,7 @@ and the others on the original; you can also force either machine.
 | pause / reset | `P` / `R` |
 
 Sound starts with your first click or key press (browsers require one). On a phone, use the on-screen buttons (you can slide your thumb across the D-pad). Games with a battery save to your
-browser's local storage. Original Game Boy games come in three colour schemes: grey, DMG green and Pocket.
+browser's local storage. Original Game Boy games come in three colour schemes on the original machine: grey, DMG green and Pocket.
 
 ## Build
 
@@ -141,6 +142,7 @@ src/bus.c        memory map, I/O registers, timer, OAM DMA, the clock
 src/ppu.c        pixel FIFO renderer (DMG and CGB), LCD timing, OAM corruption bug
 src/apu.c        the four sound channels, frame sequencer and mixer
 src/cart.c       memory bank controllers and the MBC3 clock
+src/compat.c     the CGB boot ROM's colours for original Game Boy games
 src/cli.c        mattone-run
 src/wasm.c       WebAssembly exports
 web/             the browser front end (plain HTML, CSS and JS, no build step)

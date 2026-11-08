@@ -391,6 +391,7 @@ int gb_load_model(gb_t *g, const uint8_t *rom, size_t size, int model) {
         g->h = 0x00; g->l = 0x7C;
         g->bcps = 0x88; /* where the boot ROM left the palette indexes */
         g->ocps = 0x90;
+        cgb_compat_palettes(g);
     } else if (g->cgb) {
         g->a = 0x11; g->f = 0x80;
         g->b = 0x00; g->c = 0x00;
