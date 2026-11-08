@@ -8,14 +8,19 @@
 #define FH 0x20
 #define FC 0x10
 
+/* The CPU sees the timer as it is at the end of the M-cycle but the PPU as it
+ * was at its start, so the PPU advances after the access. */
 static uint8_t rd(gb_t *g, uint16_t addr) {
-    gb_tick(g);
-    return gb_read(g, addr);
+    gb_tick_early(g);
+    uint8_t v = gb_read(g, addr);
+    ppu_tick(g);
+    return v;
 }
 
 static void wr(gb_t *g, uint16_t addr, uint8_t v) {
-    gb_tick(g);
+    gb_tick_early(g);
     gb_write(g, addr, v);
+    ppu_tick(g);
 }
 
 static uint8_t fetch(gb_t *g) {
@@ -196,6 +201,7 @@ static void exec(gb_t *g, uint8_t op) {
     if (x == 1) {
         if (op == 0x76) halt(g);
         else set_r(g, y, get_r(g, z)); /* LD r,r' */
+        if (op == 0x40) g->breakpoint = 1;
         return;
     }
     if (x == 2) {

@@ -2,7 +2,7 @@
 
 # mattone
 
-**A Game Boy emulator written in C11, with sound. The same core runs natively and in your browser as a 21 KB WebAssembly module.**
+**A Game Boy emulator written in C11, with sound. The same core runs natively and in your browser as a 22 KB WebAssembly module. It passes every DMG test of the mooneye suite.**
 
 *Mattone* is Italian for "brick", the nickname the original Game Boy earned.
 
@@ -10,7 +10,7 @@
 
 [![CI](https://github.com/AndreaAcanfora/mattone/actions/workflows/ci.yml/badge.svg)](https://github.com/AndreaAcanfora/mattone/actions/workflows/ci.yml)
 [![C11](https://img.shields.io/badge/C-11-A8B9CC?logo=c&logoColor=white)](src)
-[![WebAssembly](https://img.shields.io/badge/wasm-21_KB-654FF0?logo=webassembly&logoColor=white)](src/wasm.c)
+[![WebAssembly](https://img.shields.io/badge/wasm-22_KB-654FF0?logo=webassembly&logoColor=white)](src/wasm.c)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Donate with PayPal](https://img.shields.io/badge/donate-PayPal-00457C?logo=paypal)](https://www.paypal.com/paypalme/AndreaAca)
 
@@ -26,11 +26,11 @@ Game: [Tobu Tobu Girl](https://github.com/SimonLarsen/tobutobugirl) by Tangram G
 | Part | Status |
 | --- | --- |
 | **CPU** (Sharp SM83) | every opcode including the CB prefix, cycle-accurate per memory access, interrupts, `HALT` and the HALT bug, `EI` delay |
-| **Timer** | DIV/TIMA/TMA/TAC with the falling-edge behaviour and the one-cycle overflow delay |
-| **PPU** | background, window (with its own line counter), 8×8 and 8×16 sprites, the 10-per-line limit, DMG priority rules, STAT interrupts, scanline timing |
-| **OAM DMA** | 160 cycles, one byte per cycle |
-| **Cartridges** | ROM only, MBC1, MBC2, MBC3 with the real-time clock, MBC5; battery saves |
-| **Joypad, serial** | buttons with the joypad interrupt; the link port with nothing plugged in |
+| **Timer** | DIV/TIMA/TMA/TAC with the falling-edge behaviour, the overflow delay and the reload write races |
+| **PPU** | background, window (with its own line counter), 8×8 and 8×16 sprites, the 10-per-line limit, DMG priority rules; mode 3 stretched by scrolling, the window and each sprite; STAT and LY=LYC timing, OAM/VRAM lock-out and the LCD switch-on line exact to the M-cycle. Pixels are drawn a line at a time, not with a pixel FIFO |
+| **OAM DMA** | start delay, restart, 160 cycles at one byte per cycle, bus conflicts with the CPU |
+| **Cartridges** | ROM only, MBC1 (and MBC1M multicarts), MBC2, MBC3 with the real-time clock, MBC5; battery saves |
+| **Joypad, serial** | buttons with the joypad interrupt; the link port with nothing plugged in, clocked at 8192 Hz in step with the system clock |
 | **Sound** | both square channels (with sweep), wave and noise; length, envelope and sweep units on the 512 Hz frame sequencer; DMG quirks such as wave RAM access while playing; stereo panning and master volume; a high-pass filter like the real output capacitor |
 | **Game Boy Color** | no: original DMG only |
 
@@ -47,10 +47,13 @@ The test ROMs run on every push, on GCC and Clang, and again under AddressSaniti
 | Blargg `dmg_sound` (all 12) | ✅ pass |
 | A4 tone on each melodic channel ([tests/tone-test.py](tests/tone-test.py)) | ✅ 439.8 Hz measured in the recorded WAV, as the hardware formula predicts |
 | [dmg-acid2](https://github.com/mattcurrie/dmg-acid2) (PPU) | ✅ pixel-identical to the reference, natively and in the WebAssembly build |
+| [mooneye test suite](https://github.com/Gekkio/mooneye-test-suite): every `acceptance` and `emulator-only` test that applies to the DMG (94) | ✅ all pass: CPU and interrupt timing, timer, OAM DMA, PPU timing, serial, boot state, MBC1/2/5 |
+| mooneye `manual-only/sprite_priority` | ✅ pixel-identical to the reference |
 | Blargg `oam_bug` | ❌ the OAM corruption bug is not emulated |
 
-The ROMs are not in the repository (Blargg's carry no licence): `tests/fetch-roms.sh` downloads them from pinned
-commits and checks their SHA-256.
+The mooneye tests for other models (SGB, MGB, CGB, AGB and the first DMG revision) are skipped. The ROMs are not in
+the repository (Blargg's carry no licence): `tests/fetch-roms.sh` downloads them from pinned releases and checks their
+SHA-256.
 
 ## Play
 
@@ -93,6 +96,7 @@ build/mattone-run --serial --until Passed cpu_instrs.gb        # print what a te
 build/mattone-run --frames 120 --screenshot out.pgm game.gb    # save the screen after 2 seconds
 build/mattone-run --input moves.txt --dump frames/ game.gb     # scripted buttons, every frame to disk
 build/mattone-run --frames 1800 --wav music.wav game.gb       # record 30 seconds of sound
+build/mattone-run --mooneye acceptance/div_timing.gb          # pass/fail of a mooneye test ROM
 ```
 
 ### Using the core from C
@@ -102,7 +106,7 @@ build/mattone-run --frames 1800 --wav music.wav game.gb       # record 30 second
 
 static gb_t gb;                     /* about 175 KB, so not on the stack */
 gb_load(&gb, rom, rom_size);        /* GB_OK, or GB_ERR_SIZE / GB_ERR_CART / GB_ERR_HEADER */
-gb_set_sample_rate(&gb, 48000);     /* optional: sound costs about 15% more time */
+gb_set_sample_rate(&gb, 48000);     /* optional: sound costs about 17% more time */
 for (;;) {
     gb_set_buttons(&gb, GB_A | GB_RIGHT);
     gb_run_frame(&gb);              /* 70224 cycles */
@@ -118,8 +122,8 @@ for (;;) {
 
 | Build | Without sound | With sound (48 kHz) |
 | --- | --- | --- |
-| native, GCC 13 `-O2` | ~1,900 fps (~32× real time) | ~1,640 fps (~27×) |
-| WebAssembly in Node 24 | ~1,140 fps (~19×) | ~1,010 fps (~17×) |
+| native, GCC 13 `-O2` | ~1,720 fps (~29× real time) | ~1,470 fps (~25×) |
+| WebAssembly in Node 24 | ~1,080 fps (~18×) | ~940 fps (~16×) |
 
 ## Layout
 

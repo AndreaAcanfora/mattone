@@ -63,6 +63,7 @@ typedef struct gb {
     uint8_t a, f, b, c, d, e, h, l;
     uint16_t sp, pc;
     uint8_t ime, ei_pending, halted, halt_bug;
+    uint8_t breakpoint; /* set when LD B,B runs: test ROMs use it to say "done" */
 
     /* memory */
     const uint8_t *rom;
@@ -76,7 +77,7 @@ typedef struct gb {
 
     /* cartridge */
     uint8_t cart_type, mbc, has_battery, has_rtc;
-    uint8_t ram_enabled, mbc1_mode, bank_lo, bank_hi, ram_bank;
+    uint8_t ram_enabled, mbc1_mode, mbc1_multicart, bank_lo, bank_hi, ram_bank;
     uint16_t rom_bank;
     uint32_t cart_ram_size;
     uint8_t cart_ram[GB_CART_RAM_MAX];
@@ -89,18 +90,20 @@ typedef struct gb {
     uint8_t tima_reloaded; /* set during the M-cycle in which the reload happened */
 
     /* PPU */
-    uint16_t dot;
+    uint16_t dot, hblank_dot;
+    uint8_t line; /* the line being drawn; LY changes slightly before it */
     uint8_t window_line, stat_line, frame_done;
     uint8_t pixels[GB_HEIGHT][GB_WIDTH]; /* shades 0 (white) .. 3 (black) */
 
     /* OAM DMA */
-    uint8_t dma_active, dma_index, dma_delay;
-    uint16_t dma_source;
+    uint8_t dma_active, dma_index, dma_start, dma_byte; /* dma_start: M-cycles until a requested transfer begins */
+    uint16_t dma_source, dma_next;
 
     gb_apu apu;
 
     /* joypad and serial */
     uint8_t buttons;
+    uint8_t serial_bits; /* bits shifted in the current transfer */
     uint32_t serial_len;
     uint8_t serial[GB_SERIAL_MAX]; /* bytes sent through the link port */
 

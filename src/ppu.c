@@ -1,7 +1,9 @@
 /* The picture processing unit. Timing follows the scanline: OAM scan for 80
- * dots, drawing for 172, H-blank for the rest of the 456; lines 144-153 are
- * V-blank. A whole line is rendered when drawing starts, which is enough for
- * games that change registers between lines (as dmg-acid2 does). */
+ * dots, drawing for 172 or more (scrolling, the window and sprites stall it),
+ * H-blank for the rest of the 456; lines 144-153 are V-blank. A whole line
+ * is rendered when drawing starts, which is enough for games that change
+ * registers between lines (as dmg-acid2 does); mode timings are exact to the
+ * M-cycle as the mooneye tests measure them. */
 #include "internal.h"
 
 #define MODE_HBLANK 0
@@ -11,7 +13,6 @@
 
 #define DOTS_PER_LINE 456
 #define DRAW_START 80
-#define HBLANK_START 252
 
 static void set_mode(gb_t *g, int mode) {
     g->io[R_STAT] = (uint8_t)((g->io[R_STAT] & ~3) | mode);
@@ -20,17 +21,20 @@ static void set_mode(gb_t *g, int mode) {
 /* The STAT interrupt fires on a rising edge of the OR of its sources. */
 void ppu_update_stat(gb_t *g) {
     uint8_t stat = g->io[R_STAT];
-    if (!(g->io[R_LCDC] & 0x80)) {
-        g->stat_line = 0;
-        return;
-    }
-    int coincidence = g->io[R_LY] == g->io[R_LYC];
+    /* With the LCD off the comparison clock stops: the flag and the
+     * interrupt line keep their last state. */
+    if (!(g->io[R_LCDC] & 0x80)) return;
+    /* While LY is changing (the last M-cycle of a line) the comparison reads
+     * false; it is made again when the new line starts. */
+    int coincidence = g->io[R_LY] == g->io[R_LYC] && g->dot != DOTS_PER_LINE - 4;
     stat = coincidence ? (stat | 4) : (stat & ~4);
     g->io[R_STAT] = stat;
 
     int mode = stat & 3;
+    /* On the DMG the mode 2 source also fires as line 144 (V-blank) begins. */
+    int oam = mode == MODE_OAM || (mode == MODE_VBLANK && g->line == GB_HEIGHT && g->dot == 0);
     int line = ((stat & 0x40) && coincidence) || ((stat & 0x08) && mode == MODE_HBLANK) ||
-               ((stat & 0x10) && mode == MODE_VBLANK) || ((stat & 0x20) && mode == MODE_OAM);
+               ((stat & 0x10) && mode == MODE_VBLANK) || ((stat & 0x20) && oam);
     if (line && !g->stat_line) g->io[R_IF] |= INT_STAT;
     g->stat_line = (uint8_t)line;
 }
@@ -39,6 +43,7 @@ void ppu_reset(gb_t *g) {
     g->dot = 0;
     g->window_line = 0;
     g->io[R_LY] = 0;
+    g->line = 0;
     set_mode(g, MODE_OAM);
     ppu_update_stat(g);
 }
@@ -49,15 +54,19 @@ void ppu_write_lcdc(gb_t *g, uint8_t v) {
     if (was_on && !(v & 0x80)) {
         g->dot = 0;
         g->io[R_LY] = 0;
+        g->line = 0;
         g->window_line = 0;
         set_mode(g, MODE_HBLANK);
         mem_fill(g->pixels, 0, sizeof g->pixels);
         ppu_update_stat(g);
     } else if (!was_on && (v & 0x80)) {
+        /* The first line after switching on skips mode 2: it shows mode 0
+         * until drawing starts. */
         g->dot = 0;
         g->io[R_LY] = 0;
+        g->line = 0;
         g->window_line = 0;
-        set_mode(g, MODE_OAM);
+        set_mode(g, MODE_HBLANK);
         ppu_update_stat(g);
     }
 }
@@ -75,18 +84,47 @@ static uint16_t bg_tile_row(const gb_t *g, uint16_t map, int tx, int ty, int row
     return (uint16_t)(0x1000 + (int8_t)tile * 16 + row * 2);
 }
 
-static void render_line(gb_t *g) {
+/* Extra mode 3 dots for the sprites on a line, which must be sorted from left
+ * to right (Pan Docs, "OBJ penalty algorithm"). */
+static int sprite_penalty(const gb_t *g, const int *sorted, int count, int window_x) {
+    int penalty = 0, last_tile = 0x7FFF;
+    for (int k = 0; k < count; k++) {
+        int ox = g->oam[sorted[k] * 4 + 1];
+        if (ox >= 168) continue; /* entirely off the right side: never fetched */
+        /* The tile under the sprite's leftmost pixel, and its pixels to the
+         * right. Sprites at X = 0 wait as if 7 pixels were left, whatever SCX. */
+        int x = ox - 8, u = x >= window_x ? x - window_x : x + g->io[R_SCX];
+        int tile = (u >> 3) + (x >= window_x ? 0x1000 : 0);
+        if (ox == 0) {
+            u = 0;
+            tile = -0x1000;
+        }
+        if (tile != last_tile) {
+            int right = 7 - (u & 7) - 2;
+            if (right > 0) penalty += right;
+            last_tile = tile;
+        }
+        penalty += 6;
+    }
+    return penalty;
+}
+
+/* Renders the current line and returns how long mode 3 lasts, in dots. */
+static int render_line(gb_t *g) {
     uint8_t lcdc = g->io[R_LCDC];
-    int ly = g->io[R_LY];
+    int ly = g->line;
     uint8_t color[GB_WIDTH] = {0}; /* background/window colour numbers */
     uint8_t *out = g->pixels[ly];
+    int length = 172 + (g->io[R_SCX] & 7), window_x = GB_WIDTH;
 
     if (lcdc & 0x01) {
         uint16_t map = (lcdc & 0x08) ? 0x1C00 : 0x1800;
         int y = (ly + g->io[R_SCY]) & 0xFF;
+        uint16_t row = 0;
         for (int x = 0; x < GB_WIDTH; x++) {
             int px = (x + g->io[R_SCX]) & 0xFF;
-            color[x] = (uint8_t)tile_pixel(g, bg_tile_row(g, map, px >> 3, y >> 3, y & 7), px & 7);
+            if (x == 0 || (px & 7) == 0) row = bg_tile_row(g, map, px >> 3, y >> 3, y & 7);
+            color[x] = (uint8_t)tile_pixel(g, row, px & 7);
         }
 
         int wx = g->io[R_WX] - 7;
@@ -95,16 +133,19 @@ static void render_line(gb_t *g) {
             int wy = g->window_line;
             for (int x = wx < 0 ? 0 : wx; x < GB_WIDTH; x++) {
                 int px = x - wx;
-                color[x] = (uint8_t)tile_pixel(g, bg_tile_row(g, wmap, px >> 3, wy >> 3, wy & 7), px & 7);
+                if (x == wx || x == 0 || (px & 7) == 0) row = bg_tile_row(g, wmap, px >> 3, wy >> 3, wy & 7);
+                color[x] = (uint8_t)tile_pixel(g, row, px & 7);
             }
             g->window_line++; /* the window has its own line counter */
+            window_x = wx;
+            length += 6; /* setting up the fetcher for the window */
         }
     }
 
     uint8_t bgp = g->io[R_BGP];
     for (int x = 0; x < GB_WIDTH; x++) out[x] = (bgp >> (color[x] * 2)) & 3;
 
-    if (!(lcdc & 0x02)) return;
+    if (!(lcdc & 0x02)) return length;
 
     /* Pick the first ten sprites on this line, in OAM order. */
     int height = (lcdc & 0x04) ? 16 : 8;
@@ -125,6 +166,12 @@ static void render_line(gb_t *g) {
         }
         chosen[b + 1] = v;
     }
+    /* Pan Docs' sprite penalty, minus 3 dots: that offset makes mode 0 start
+     * on the M-cycle the hardware does in every case of mooneye's
+     * intr_2_mode0_timing_sprites. */
+    int penalty = sprite_penalty(g, chosen, count, window_x);
+    if (penalty > 3) length += penalty - 3;
+
     int16_t sprite[GB_WIDTH]; /* -1 = none, else shade | behind_bg << 8 */
     for (int x = 0; x < GB_WIDTH; x++) sprite[x] = -1;
     for (int k = count - 1; k >= 0; k--) {
@@ -148,22 +195,29 @@ static void render_line(gb_t *g) {
         if ((sprite[x] & 0x100) && color[x]) continue;
         out[x] = sprite[x] & 3;
     }
+    return length;
 }
 
-/* Advances one M-cycle (4 dots). Every boundary (80, 252, 456) is a multiple
- * of 4, so checking once per M-cycle sees each of them exactly. */
+/* Advances one M-cycle (4 dots). Mode 0 starts on the first M-cycle at or
+ * after the end of mode 3, whose length varies. */
 void ppu_tick(gb_t *g) {
     if (!(g->io[R_LCDC] & 0x80)) return;
-    int ly = g->io[R_LY];
+    int ly = g->line;
     g->dot += 4;
     if (ly < GB_HEIGHT) {
         if (g->dot == DRAW_START) {
             set_mode(g, MODE_DRAW);
-            render_line(g);
-        } else if (g->dot == HBLANK_START) {
+            g->hblank_dot = (uint16_t)(DRAW_START + render_line(g));
+        } else if ((g->io[R_STAT] & 3) == MODE_DRAW && g->dot >= g->hblank_dot) {
             set_mode(g, MODE_HBLANK);
             ppu_update_stat(g);
         }
+    }
+    if (g->dot == DOTS_PER_LINE - 4) {
+        /* LY moves on one M-cycle before the line ends. */
+        g->io[R_LY] = (uint8_t)(ly == 153 ? 0 : ly + 1);
+        ppu_update_stat(g);
+        return;
     }
     if (g->dot < DOTS_PER_LINE) return;
 
@@ -178,6 +232,6 @@ void ppu_tick(gb_t *g) {
         g->window_line = 0;
     }
     if (ly < GB_HEIGHT) set_mode(g, MODE_OAM);
-    g->io[R_LY] = (uint8_t)ly;
+    g->line = (uint8_t)ly;
     ppu_update_stat(g);
 }

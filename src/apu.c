@@ -184,7 +184,9 @@ void apu_tick(gb_t *g) {
     if (a->power) {
         for (int ch = 0; ch < 4; ch++) {
             gb_channel *c = &a->ch[ch];
-            if (!c->enabled) continue;
+            /* Without sound output only the wave channel's position can be
+             * observed (through wave RAM), so the others can rest. */
+            if (!c->enabled || (!a->sample_rate && ch != CH_WAVE)) continue;
             c->timer -= 4;
             while (c->timer <= 0) {
                 /* This step fell on T-cycle 3 + timer of the M-cycle. */

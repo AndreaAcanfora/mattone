@@ -1,7 +1,7 @@
 /* mattone-run: runs a ROM without a window, for tests and screenshots.
  *
  *   mattone-run [--frames N] [--serial] [--until TEXT] [--screenshot FILE.pgm]
- *               [--input FILE] [--dump DIR] [--wav FILE.wav] ROM
+ *               [--input FILE] [--dump DIR] [--wav FILE.wav] [--mooneye] ROM
  *
  * --serial prints the text the ROM reports: what it sent through the link
  * port, or, for test ROMs that use Blargg's memory protocol (signature
@@ -11,6 +11,8 @@
  * (comma-separated: up,down,left,right,a,b,start,select, or "-" for none)
  * are held. --dump writes every frame to DIR/00000.pgm, DIR/00001.pgm...
  * --wav records the sound as 48 kHz 16-bit stereo.
+ * --mooneye runs until the ROM executes LD B,B, the end marker of the
+ * mooneye test suite, then passes if B C D E H L hold 3 5 8 13 21 34.
  * The exit status is 0 unless loading fails, or --until was given and TEXT
  * never appeared. */
 #include <stdio.h>
@@ -120,13 +122,13 @@ static int read_inputs(const char *path) {
 
 static void usage(void) {
     fputs("usage: mattone-run [--frames N] [--serial] [--until TEXT] [--screenshot FILE.pgm]\n"
-          "                   [--input FILE] [--dump DIR] [--wav FILE.wav] ROM\n", stderr);
+          "                   [--input FILE] [--dump DIR] [--wav FILE.wav] [--mooneye] ROM\n", stderr);
     exit(2);
 }
 
 int main(int argc, char **argv) {
     long frames = 600;
-    int serial = 0;
+    int serial = 0, mooneye = 0;
     const char *until = NULL, *shot = NULL, *rom_path = NULL, *dump = NULL, *wav_path = NULL;
 
     for (int i = 1; i < argc; i++) {
@@ -136,6 +138,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) shot = argv[++i];
         else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dump = argv[++i];
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wav_path = argv[++i];
+        else if (!strcmp(argv[i], "--mooneye")) mooneye = 1;
         else if (!strcmp(argv[i], "--input") && i + 1 < argc) {
             if (read_inputs(argv[++i])) {
                 perror(argv[i]);
@@ -180,6 +183,7 @@ int main(int argc, char **argv) {
         gb_run_frame(&gb);
         if (wav) wav_append(&gb, wav, &wav_frames);
         if (until) found = contains(&gb, until);
+        if (mooneye && gb.breakpoint) break;
         if (dump) {
             char path[4096];
             snprintf(path, sizeof path, "%s/%05ld.pgm", dump, f);
@@ -208,5 +212,10 @@ int main(int argc, char **argv) {
         return 1;
     }
     free(rom);
+    if (mooneye) {
+        int pass = gb.breakpoint && gb.b == 3 && gb.c == 5 && gb.d == 8 && gb.e == 13 && gb.h == 21 && gb.l == 34;
+        puts(pass ? "pass" : gb.breakpoint ? "fail" : "fail (no LD B,B)");
+        return pass ? 0 : 1;
+    }
     return until && !found ? 1 : 0;
 }

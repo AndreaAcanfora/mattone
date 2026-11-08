@@ -27,6 +27,13 @@ int cart_init(gb_t *g) {
     g->cart_ram_size = g->mbc == 2 ? 0x200 : (ram_code < 6 ? ram_sizes[ram_code] : 0);
     g->rom_bank = 1;
     g->bank_lo = 1;
+    /* MBC1M multicarts (1 MiB, a second Nintendo logo at bank 0x10) wire only
+     * four bits of the low bank register. */
+    if (g->mbc == 1 && g->rom_size == 0x100000) {
+        int same = 1;
+        for (int i = 0x104; i < 0x134 && same; i++) same = g->rom[i] == g->rom[0x40000 + i];
+        g->mbc1_multicart = (uint8_t)same;
+    }
     mem_fill(g->cart_ram, 0xFF, sizeof g->cart_ram);
     return GB_OK;
 }
@@ -45,7 +52,7 @@ static int ram_offset(const gb_t *g, uint16_t addr) {
 
 uint8_t cart_read(gb_t *g, uint16_t addr) {
     if (addr < 0x4000) {
-        uint32_t bank = (g->mbc == 1 && g->mbc1_mode) ? (uint32_t)g->bank_hi << 5 : 0;
+        uint32_t bank = (g->mbc == 1 && g->mbc1_mode) ? (uint32_t)g->bank_hi << (g->mbc1_multicart ? 4 : 5) : 0;
         return rom_at(g, bank, addr);
     }
     if (addr < 0x8000) return rom_at(g, g->rom_bank, addr);
@@ -60,7 +67,8 @@ uint8_t cart_read(gb_t *g, uint16_t addr) {
 }
 
 static void mbc1_update(gb_t *g) {
-    g->rom_bank = (uint16_t)(g->bank_hi << 5 | g->bank_lo);
+    if (g->mbc1_multicart) g->rom_bank = (uint16_t)(g->bank_hi << 4 | (g->bank_lo & 0x0F));
+    else g->rom_bank = (uint16_t)(g->bank_hi << 5 | g->bank_lo);
     g->ram_bank = g->bank_hi;
 }
 
