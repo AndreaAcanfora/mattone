@@ -25,6 +25,12 @@ enum {
     R_OBP1 = 0x49,
     R_WY = 0x4A,
     R_WX = 0x4B,
+    /* CGB */
+    R_KEY1 = 0x4D,
+    R_VBK = 0x4F,
+    R_HDMA1 = 0x51, R_HDMA2, R_HDMA3, R_HDMA4, R_HDMA5,
+    R_BCPS = 0x68, R_BCPD, R_OCPS, R_OCPD, R_OPRI,
+    R_SVBK = 0x70,
 };
 
 enum {
@@ -39,6 +45,7 @@ enum {
 void gb_tick(gb_t *gb);       /* advances everything but the CPU by one M-cycle */
 void gb_tick_early(gb_t *gb); /* the same without the PPU, which then needs ppu_tick() */
 uint8_t gb_read(gb_t *gb, uint16_t addr);
+void gb_hblank(gb_t *gb); /* the PPU entered mode 0 on a visible line */
 void gb_write(gb_t *gb, uint16_t addr, uint8_t value);
 
 /* cpu.c */
@@ -55,7 +62,7 @@ void ppu_oam_bug(gb_t *gb, int kind);
 
 /* apu.c */
 void apu_reset(gb_t *gb);
-void apu_tick(gb_t *gb);
+void apu_tick(gb_t *gb, int t_cycles);
 void apu_frame_sequencer(gb_t *gb);
 uint8_t apu_read(gb_t *gb, uint8_t reg);
 void apu_write(gb_t *gb, uint8_t reg, uint8_t value);
@@ -64,7 +71,7 @@ void apu_write(gb_t *gb, uint8_t reg, uint8_t value);
 int cart_init(gb_t *gb);
 uint8_t cart_read(gb_t *gb, uint16_t addr);
 void cart_write(gb_t *gb, uint16_t addr, uint8_t value);
-void cart_tick(gb_t *gb);
+void cart_tick(gb_t *gb, int t_cycles);
 
 static inline void mem_fill(void *dst, uint8_t value, size_t n) {
     uint8_t *p = dst;

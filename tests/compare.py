@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Compares a mattone-run screenshot (PGM) with a reference PNG.
+"""Compares a mattone-run screenshot with a reference PNG.
 
-Usage: compare.py SCREENSHOT.pgm REFERENCE.png [DIFF.pgm]
+Usage: compare.py SCREENSHOT.pgm|SCREENSHOT.ppm REFERENCE.png [DIFF.pgm]
 
-Both images are reduced to the four DMG shades (nearest of FF/AA/55/00), so
-the reference may use any grey or colour palette with that brightness order.
-Exits 0 when every pixel matches. Standard library only.
+A PGM (DMG) screenshot and the reference are reduced to the four DMG shades
+(nearest of FF/AA/55/00), so the reference may use any grey or colour palette
+with that brightness order. A PPM (CGB) screenshot must match the reference's
+RGB values exactly. Exits 0 when every pixel matches. Standard library only.
 """
 import struct
 import sys
@@ -13,16 +14,21 @@ import zlib
 
 
 def read_pgm(path):
+    """Returns width, height and grey values; for a PPM, (r, g, b) tuples."""
     data = open(path, "rb").read()
     parts = data.split(maxsplit=4)
-    if parts[0] != b"P5":
-        raise ValueError(f"{path}: not a binary PGM")
+    if parts[0] not in (b"P5", b"P6"):
+        raise ValueError(f"{path}: not a binary PGM or PPM")
     width, height = int(parts[1]), int(parts[2])
-    return width, height, list(parts[4][: width * height])
+    if parts[0] == b"P5":
+        return width, height, list(parts[4][: width * height])
+    raw = parts[4][: width * height * 3]
+    return width, height, [tuple(raw[i : i + 3]) for i in range(0, len(raw), 3)]
 
 
-def read_png(path):
-    """Decodes a non-interlaced PNG (greyscale/palette at 1-8 bits, RGB(A) at 8) to luma."""
+def read_png(path, rgb=False):
+    """Decodes a non-interlaced PNG (greyscale/palette at 1-8 bits, RGB(A) at 8)
+    to luma values, or to (r, g, b) tuples with rgb=True."""
     data = open(path, "rb").read()
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError(f"{path}: not a PNG")
@@ -79,7 +85,7 @@ def read_png(path):
                 r, g, b = px[0], px[1], px[2]
             else:
                 r = g = b = px[0]
-            luma.append((r * 299 + g * 587 + b * 114) // 1000)
+            luma.append((r, g, b) if rgb else (r * 299 + g * 587 + b * 114) // 1000)
     return width, height, luma
 
 
@@ -92,11 +98,15 @@ def main():
         print(__doc__, file=sys.stderr)
         return 2
     w1, h1, got = read_pgm(sys.argv[1])
-    w2, h2, want = read_png(sys.argv[2])
+    colour = bool(got) and isinstance(got[0], tuple)
+    w2, h2, want = read_png(sys.argv[2], rgb=colour)
     if (w1, h1) != (w2, h2):
         print(f"size mismatch: {w1}x{h1} vs {w2}x{h2}")
         return 1
-    diff = [i for i in range(w1 * h1) if shade(got[i]) != shade(want[i])]
+    if colour:
+        diff = [i for i in range(w1 * h1) if got[i] != want[i]]
+    else:
+        diff = [i for i in range(w1 * h1) if shade(got[i]) != shade(want[i])]
     if len(sys.argv) == 4:
         with open(sys.argv[3], "wb") as f:
             f.write(b"P5\n%d %d\n255\n" % (w1, h1))

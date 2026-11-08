@@ -3,18 +3,19 @@
 
 Usage: make-gif.py DIR OUT.gif [--from N] [--to N] [--step N] [--scale N]
 
-Standard library only. Frames are 4-shade PGMs; consecutive identical frames
-are merged into one longer frame.
+Standard library only. Frames are 4-shade PGMs (DMG) or PPMs (CGB); one
+colour table serves the whole GIF when 256 colours are enough, otherwise each
+frame gets its own. Consecutive identical frames are merged into one longer
+frame.
 """
 import argparse
 import glob
 import os
 import struct
 
-SHADES = {0xFF: 0, 0xAA: 1, 0x55: 2, 0x00: 3}
 
 
-def lzw(indices, min_size=2):
+def lzw(indices, min_size):
     clear, end = 1 << min_size, (1 << min_size) + 1
     table = {bytes([i]): i for i in range(clear)}
     size, next_code = min_size + 1, end + 1
@@ -65,33 +66,54 @@ def main():
     a = ap.parse_args()
 
     frames = []
-    for path in sorted(glob.glob(os.path.join(a.dir, "*.pgm"))):
+    for path in sorted(glob.glob(os.path.join(a.dir, "*.p[gp]m"))):
         n = int(os.path.basename(path)[:-4])
         if a.start <= n <= a.to and (n - a.start) % a.step == 0:
             data = open(path, "rb").read().split(maxsplit=4)
-            w, h, px = int(data[1]), int(data[2]), data[4]
+            w, h = int(data[1]), int(data[2])
+            if data[0] == b"P6":
+                raw = data[4][: w * h * 3]
+                px = [raw[i : i + 3] for i in range(0, len(raw), 3)]
+            else:
+                px = [bytes([v, v, v]) for v in data[4][: w * h]]
             if frames and frames[-1][0] == px:
                 frames[-1][1] += 1
             else:
                 frames.append([px, 1])
 
+    def palette(colour_set):
+        colours = sorted(colour_set)
+        if len(colours) > 256:
+            raise SystemExit(f"a frame has {len(colours)} colours: a GIF holds 256")
+        bits = max(2, (len(colours) - 1).bit_length())
+        table = b"".join(colours) + b"\0\0\0" * ((1 << bits) - len(colours))
+        return {c: i for i, c in enumerate(colours)}, bits, table
+
+    all_colours = {c for px, _ in frames for c in px}
+    shared = palette(all_colours) if len(all_colours) <= 256 else None
+
     s = a.scale
     W, H = w * s, h * s
-    out = bytearray(b"GIF89a" + struct.pack("<HHBBB", W, H, 0xF1, 0, 0))
-    out += bytes([0xFF, 0xFF, 0xFF, 0xAA, 0xAA, 0xAA, 0x55, 0x55, 0x55, 0x00, 0x00, 0x00])
+    flags = (0x80 | (shared[1] - 1) << 4 | (shared[1] - 1)) if shared else 0
+    out = bytearray(b"GIF89a" + struct.pack("<HHBBB", W, H, flags, 0, 0))
+    if shared:
+        out += shared[2]
     out += b"\x21\xFF\x0BNETSCAPE2.0\x03\x01\x00\x00\x00"  # loop forever
     for px, count in frames:
+        index, bits, table = shared or palette(set(px))
         delay = round(count * a.step * 100 / 59.7275)
         out += b"\x21\xF9\x04\x00" + struct.pack("<H", delay) + b"\x00\x00"
-        out += b"\x2C" + struct.pack("<HHHHB", 0, 0, W, H, 0)
+        out += b"\x2C" + struct.pack("<HHHHB", 0, 0, W, H, 0 if shared else 0x80 | (bits - 1))
+        if not shared:
+            out += table
         idx = bytearray()
         for y in range(h):
             row = bytearray()
             for x in range(w):
-                row += bytes([SHADES[px[y * w + x]]]) * s
+                row += bytes([index[px[y * w + x]]]) * s
             idx += bytes(row) * s
-        data = lzw(idx)
-        out.append(2)
+        data = lzw(idx, bits)
+        out.append(bits)
         for i in range(0, len(data), 255):
             chunk = data[i : i + 255]
             out += bytes([len(chunk)]) + chunk

@@ -56,11 +56,13 @@ jobs:
         with:
           path: tests/roms
           key: test-roms-${{ hashFiles('tests/fetch-roms.sh') }}
-      - name: dmg-acid2 in the WebAssembly build matches the reference
+      - name: dmg-acid2 and cgb-acid2 in the WebAssembly build match the references
         run: |
           tests/fetch-roms.sh
           node tests/wasm-test.mjs tests/roms/dmg-acid2.gb acid2-wasm.pgm
           python3 tests/compare.py acid2-wasm.pgm tests/roms/dmg-acid2.png
+          node tests/wasm-test.mjs tests/roms/cgb-acid2.gbc cgb-acid2-wasm.ppm
+          python3 tests/compare.py cgb-acid2-wasm.ppm tests/roms/cgb-acid2.png
       - uses: actions/upload-artifact@v4
         with:
           name: web

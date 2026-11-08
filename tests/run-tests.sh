@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Runs the test ROMs through build/mattone-run and reports each result.
 set -u
 cd "$(dirname "$0")/.."
@@ -10,9 +10,10 @@ failed=0
 pass() { printf '  pass  %s\n' "$1"; }
 fail() { printf '  FAIL  %s\n' "$1"; failed=$((failed + 1)); }
 
-# Blargg's ROMs print "Passed" or "Failed" when they finish.
-blargg() { # rom
-    out=$($RUN --frames 6000 --serial --until Passed "$B/$1" 2>&1)
+# Blargg's ROMs print "Passed" or "Failed" when they finish. Extra arguments
+# (--dmg, --cgb) go to the runner.
+blargg() { # rom [args]
+    out=$($RUN --frames 6000 --serial --until Passed "${@:2}" "$B/$1" 2>&1)
     if [ $? -eq 0 ]; then pass "$1"; else fail "$1"; printf '%s\n' "$out" | sed 's/^/        /'; fi
 }
 
@@ -31,20 +32,23 @@ mealybug() { # name
 
 # Screen tests: the ROM halts on a final image that must match the reference.
 screen() { # name rom reference frames
-    shot=$(mktemp)
+    shot=$(mktemp --suffix=.img)
     $RUN --frames "$4" --screenshot "$shot" "$2" && result=$(python3 tests/compare.py "$shot" "$3")
     if [ $? -eq 0 ]; then pass "$1"; else fail "$1"; echo "        $result"; fi
     rm -f "$shot"
 }
 
-echo "CPU instructions"
-for rom in "$B"/cpu_instrs/individual/*.gb; do blargg "cpu_instrs/individual/$(basename "$rom")"; done
-blargg cpu_instrs/cpu_instrs.gb
-echo "Timing"
-blargg instr_timing/instr_timing.gb
-for rom in "$B"/mem_timing/individual/*.gb; do blargg "mem_timing/individual/$(basename "$rom")"; done
-blargg mem_timing/mem_timing.gb
-blargg mem_timing-2/mem_timing.gb
+# These ROMs run on both machines: check both.
+for model in --dmg --cgb; do
+    echo "CPU instructions ($model)"
+    for rom in "$B"/cpu_instrs/individual/*.gb; do blargg "cpu_instrs/individual/$(basename "$rom")" $model; done
+    blargg cpu_instrs/cpu_instrs.gb $model
+    echo "Timing ($model)"
+    blargg instr_timing/instr_timing.gb $model
+    for rom in "$B"/mem_timing/individual/*.gb; do blargg "mem_timing/individual/$(basename "$rom")" $model; done
+    blargg mem_timing/mem_timing.gb $model
+    blargg mem_timing-2/mem_timing.gb $model
+done
 echo "HALT"
 screen halt_bug "$B/halt_bug.gb" tests/expected/halt_bug.png 300
 echo "OAM corruption bug"
@@ -53,16 +57,21 @@ echo "OAM corruption bug"
 # runs the same test and checks it by CRC.
 for rom in "$B"/oam_bug/rom_singles/*.gb; do
     case "$rom" in *7-timing_effect.gb) continue ;; esac
-    blargg "oam_bug/rom_singles/$(basename "$rom")"
+    blargg "oam_bug/rom_singles/$(basename "$rom")" --dmg
 done
-blargg oam_bug/oam_bug.gb
+blargg oam_bug/oam_bug.gb --dmg
 echo "Sound"
 for rom in "$B"/dmg_sound/rom_singles/*.gb; do blargg "dmg_sound/rom_singles/$(basename "$rom")"; done
 blargg dmg_sound/dmg_sound.gb
 python3 tests/tone-test.py "$RUN" || failed=$((failed + 1))
+echo "Game Boy Color sound"
+for rom in "$B"/cgb_sound/rom_singles/*.gb; do blargg "cgb_sound/rom_singles/$(basename "$rom")" --cgb; done
+blargg cgb_sound/cgb_sound.gb --cgb
 echo "PPU"
 screen dmg-acid2 tests/roms/dmg-acid2.gb tests/roms/dmg-acid2.png 60
 screen "mooneye manual-only/sprite_priority" "$M/manual-only/sprite_priority.gb" tests/roms/sprite_priority.png 120
+echo "Game Boy Color PPU"
+screen cgb-acid2 tests/roms/cgb-acid2.gbc tests/roms/cgb-acid2.png 60
 echo "Mid-scanline register changes"
 for t in m2_win_en_toggle m3_bgp_change m3_scx_low_3_bits; do mealybug "$t"; done
 echo "mooneye (every test that applies to the DMG)"
