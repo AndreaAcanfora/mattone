@@ -55,6 +55,8 @@ if [ ! -d mealybug ]; then
 fi
 for t in m2_win_en_toggle:b3125f1cfedaa0dd0ff8f02b9b44acf2343af9154d05dfd8788b98a0fc153935 \
          m3_bgp_change:c46133683a51f6eed3c79deb99cb0aa516f147918276c73f335c2b7d5d821f98 \
+         m3_bgp_change_sprites:7ad05d59b3d03a27ee4efa6a3ad614f00d2a2652f7dd188a6ecde2cfcbd0b4e0 \
+         m3_obp0_change:5f548ccd0a0e1e979911f00184575f64742e66a601a5f2f9fd814757c62b738a \
          m3_scx_low_3_bits:a05cd516b63ee547f6a8fa373bdecf46308baa5806be7f55f3eba207c3c03d21; do
     fetch "https://raw.githubusercontent.com/mattcurrie/mealybug-tearoom-tests/$MB/expected/DMG-blob/${t%%:*}.png" \
         "mealybug/${t%%:*}.png" "${t#*:}"

@@ -59,6 +59,7 @@ void ppu_write_lcdc(gb_t *g, uint8_t v) {
         g->io[R_LY] = 0;
         g->line = 0;
         g->window_line = 0;
+        g->fifo.drawing = 0;
         set_mode(g, MODE_HBLANK);
         for (int y = 0; y < GB_HEIGHT; y++) /* a blank screen is white */
             for (int x = 0; x < GB_WIDTH; x++) g->pixels[y][x] = g->cgb ? 0x7FFF : 0;
@@ -104,11 +105,15 @@ static void oam_scan(gb_t *g) {
 
 static void start_mode3(gb_t *g) {
     gb_fifo *f = &g->fifo;
+    f->drawing = 1;
+    f->early_hblank = 0;
+    f->hblank_in = 0;
     oam_scan(g);
     f->bg_count = 0;
     for (int i = 0; i < 8; i++) f->obj[i] = 0;
     for (int i = 0; i < 4; i++) f->lcd[i].valid = 0;
     f->step = 0;
+    f->fetched_first = 0;
     f->tile_x = 0;
     f->window = 0;
     f->window_skip = 0;
@@ -171,6 +176,12 @@ static void fetcher_dot(gb_t *g) {
         return;
     }
     if (f->bg_count) return; /* wait for the FIFO to drain */
+    /* Pushing takes the dot that starts the next fetch. */
+    f->step = 1;
+    if (!f->fetched_first) { /* the line's first tile is fetched twice */
+        f->fetched_first = 1;
+        return;
+    }
     f->bg_lo = f->attr & 0x20 ? reverse_bits(f->lo) : f->lo;
     f->bg_hi = f->attr & 0x20 ? reverse_bits(f->hi) : f->hi;
     f->bg_attr = f->attr;
@@ -183,7 +194,6 @@ static void fetcher_dot(gb_t *g) {
     }
     if (f->window) f->window_x++;
     else f->tile_x++;
-    f->step = 0;
 }
 
 /* Fetches a sprite's row and merges it under the sprites already queued. */
@@ -273,11 +283,29 @@ static void lcd_dot(gb_t *g) {
     f->lcd_count--;
 }
 
+/* Dots a sprite at OAM X stalls the pipeline: Pan Docs' penalty, waiting for
+ * the background fetch to finish its tile (once per tile), then 6 dots. */
+static int sprite_stall(const gb_t *g, int sx, int16_t *last_tile) {
+    const gb_fifo *f = &g->fifo;
+    int x = sx - 8, u = f->window ? x - f->window_start : x + g->io[R_SCX];
+    int tile = (u >> 3) + (f->window ? 0x1000 : 0), penalty = 6;
+    if (sx == 0) { /* fully off the left edge: waits as if at a tile start */
+        u = 0;
+        tile = -0x1000;
+    }
+    if (tile != *last_tile) {
+        if (5 - (u & 7) > 0) penalty += 5 - (u & 7);
+        *last_tile = (int16_t)tile;
+    }
+    return penalty;
+}
+
 /* One dot of mode 3. Returns 1 when the line's 160 pixels are out. */
 static int draw_dot(gb_t *g) {
     gb_fifo *f = &g->fifo;
     uint8_t lcdc = g->io[R_LCDC];
     f->t++;
+    if (f->hblank_in && --f->hblank_in == 0) f->early_hblank = 1;
     /* The low 3 bits of SCX (pixels to drop) are read 4 dots into mode 3
      * (mealybug m3_scx_low_3_bits). */
     if (f->t == 5) f->discard = g->io[R_SCX] & 7;
@@ -302,27 +330,16 @@ static int draw_dot(gb_t *g) {
     }
 
     /* A sprite starting here stalls the pipeline (Pan Docs' penalty: wait for
-     * the background fetch, then 6 dots; 3 dots fewer for the first sprite of
-     * the line, as mooneye's intr_2_mode0_timing_sprites measures). */
+     * the background fetch, then 6 dots). */
     if (f->sprite_next < f->sprite_count && (lcdc & 0x02) && !f->discard) {
         int sx = g->oam[f->sprites[f->sprite_next] * 4 + 1];
         if (sx >= 168) {
             f->sprite_next = f->sprite_count; /* sorted: the rest are off screen too */
         } else if (sx <= f->lx + 8) {
-            int x = sx - 8, u = f->window ? x - f->window_start : x + g->io[R_SCX];
-            int tile = (u >> 3) + (f->window ? 0x1000 : 0), penalty = 6;
-            if (sx == 0) { /* fully off the left edge: waits as if at a tile start */
-                u = 0;
-                tile = -0x1000;
-            }
-            if (tile != f->last_tile) {
-                if (5 - (u & 7) > 0) penalty += 5 - (u & 7);
-                f->last_tile = tile;
-            }
-            if (!f->sprite_seen) {
-                penalty -= 3;
-                f->sprite_seen = 1;
-            }
+            int16_t last = f->last_tile;
+            int penalty = sprite_stall(g, sx, &last);
+            f->last_tile = last;
+            f->sprite_seen = 1;
             f->sprite_wait = (uint8_t)penalty;
             lcd_dot(g);
             if (--f->sprite_wait == 0) merge_sprite(g, f->sprites[f->sprite_next++]);
@@ -332,9 +349,25 @@ static int draw_dot(gb_t *g) {
 
     fetcher_dot(g);
     lcd_dot(g);
-    /* The first 12 dots fetch the first tile (twice, on the hardware). */
-    if (++f->startup <= 12 || !f->bg_count) return 0;
+    ++f->startup;
+    if (!f->bg_count) return 0;
     output_pixel(g);
+    /* On a line with sprites, mode 0 shows 3 dots before the last pixel is
+     * out (mooneye intr_2_mode0_timing_sprites against mealybug's sprite
+     * tests). Three pixels from the end, count the stalls still to come. */
+    if (f->lx == GB_WIDTH - 3) {
+        int16_t last = f->last_tile;
+        int pending = 0, any = f->sprite_seen;
+        if (lcdc & 0x02)
+            for (int k = f->sprite_next; k < f->sprite_count; k++) {
+                int sx = g->oam[f->sprites[k] * 4 + 1];
+                if (sx >= 168) break;
+                pending += sprite_stall(g, sx, &last);
+                any = 1;
+            }
+        if (any && !pending) f->early_hblank = 1;
+        else if (any) f->hblank_in = (uint8_t)pending;
+    }
     return f->lx == GB_WIDTH;
 }
 
@@ -343,15 +376,18 @@ void ppu_tick(gb_t *g) {
     if (!(g->io[R_LCDC] & 0x80)) return;
     int ly = g->line;
     int dots = g->double_speed ? 2 : 4; /* per CPU M-cycle */
-    if ((g->io[R_STAT] & 3) == MODE_DRAW) {
+    if (g->fifo.drawing) {
         int done = 0, i = 0;
         for (; i < dots && !done; i++) done = draw_dot(g);
         for (; i < dots; i++) lcd_dot(g); /* the last pixels still travel to the LCD */
-        if (done) {
+        if ((done || g->fifo.early_hblank) && (g->io[R_STAT] & 3) == MODE_DRAW) {
             set_mode(g, MODE_HBLANK);
-            if (g->fifo.window_used) g->window_line++;
             ppu_update_stat(g);
             gb_hblank(g);
+        }
+        if (done) {
+            g->fifo.drawing = 0;
+            if (g->fifo.window_used) g->window_line++;
         }
     } else if (g->fifo.lcd_count) {
         for (int i = 0; i < dots; i++) lcd_dot(g);
