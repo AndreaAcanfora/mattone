@@ -1,6 +1,7 @@
 #!/bin/sh
 # Downloads the public test ROMs into tests/roms (not committed: Blargg's ROMs
-# carry no explicit licence). Every download is pinned and checksummed.
+# carry no explicit licence; mooneye's are MIT but kept out for the same
+# layout). Every download is pinned and checksummed.
 set -eu
 cd "$(dirname "$0")"
 mkdir -p roms
@@ -26,3 +27,13 @@ fetch https://github.com/mattcurrie/dmg-acid2/releases/download/v1.0/dmg-acid2.g
     464e14b7d42e7feea0b7ede42be7071dc88913f75b9ffa444299424b63d1dff1
 fetch "https://raw.githubusercontent.com/mattcurrie/dmg-acid2/$ACID/img/reference-dmg.png" dmg-acid2.png \
     ca966d50895c7efef05838590d148c2cbfd7fba57dab986f25b35b4da71abb57
+
+MTS=mts-20260714-0944-31510e1
+fetch "https://gekkio.fi/files/mooneye-test-suite/$MTS/$MTS.tar.gz" mooneye.tar.gz \
+    5f0694e4e9e58441db23ff057a5ab681870d4cfaed91267e99885936db8e6f1d
+if [ ! -d mooneye ]; then
+    mkdir mooneye
+    tar xzf mooneye.tar.gz -C mooneye --strip-components=1
+fi
+fetch "https://raw.githubusercontent.com/Gekkio/mooneye-test-suite/31510e12eea6286d36eea060a6adde755e1067aa/manual-only/sprite_priority-expected.png" \
+    sprite_priority.png e08708fd0e5fc7df8650314707ec0ce0c929b969f2e19b6f2860c1e82828e9a0

@@ -36,7 +36,8 @@ enum {
 };
 
 /* bus.c */
-void gb_tick(gb_t *gb); /* advances everything but the CPU by one M-cycle */
+void gb_tick(gb_t *gb);       /* advances everything but the CPU by one M-cycle */
+void gb_tick_early(gb_t *gb); /* the same without the PPU, which then needs ppu_tick() */
 uint8_t gb_read(gb_t *gb, uint16_t addr);
 void gb_write(gb_t *gb, uint16_t addr, uint8_t value);
 

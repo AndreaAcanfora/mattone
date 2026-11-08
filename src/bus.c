@@ -32,7 +32,7 @@ static int timer_signal(const gb_t *g) {
 }
 
 static void tima_increment(gb_t *g) {
-    if (++g->io[R_TIMA] == 0) g->tima_reload = 2;
+    if (++g->io[R_TIMA] == 0) g->tima_reload = 1;
 }
 
 /* Changing DIV or TAC can drop the timer signal, which counts as a tick. */
@@ -42,7 +42,23 @@ static void timer_set(gb_t *g, uint16_t sysclk, uint8_t tac) {
     if ((g->sysclk & 0x1000) && !(sysclk & 0x1000)) apu_frame_sequencer(g);
     g->sysclk = sysclk;
     g->io[R_TAC] = tac;
-    if (before && !timer_signal(g)) tima_increment(g);
+    if (before && !timer_signal(g)) {
+        tima_increment(g);
+        /* The register write lands mid M-cycle, so the overflow delay ends in
+         * time for the CPU's next interrupt check (mooneye rapid_toggle). */
+        if (g->tima_reload) g->io[R_IF] |= INT_TIMER;
+    }
+}
+
+/* With the internal clock the link port shifts one bit out (and, with nothing
+ * plugged in, a 1 in) every 512 T-cycles, in step with the system clock. */
+static void serial_tick(gb_t *g) {
+    if ((g->io[R_SC] & 0x81) != 0x81) return;
+    g->io[R_SB] = (uint8_t)(g->io[R_SB] << 1 | 1);
+    if (++g->serial_bits < 8) return;
+    g->serial_bits = 0;
+    g->io[R_SC] &= 0x7F;
+    g->io[R_IF] |= INT_SERIAL;
 }
 
 static void timer_tick(gb_t *g) {
@@ -58,27 +74,54 @@ static void timer_tick(gb_t *g) {
     g->sysclk += 4;
     if (before && !timer_signal(g)) tima_increment(g);
     if ((old & 0x1000) && !(g->sysclk & 0x1000)) apu_frame_sequencer(g);
+    /* The serial clock's edge comes one M-cycle before bit 8 of the system
+     * clock falls (mooneye boot_sclk_align). */
+    if (((old + 4) & 0x0100) && !((g->sysclk + 4) & 0x0100)) serial_tick(g);
 }
 
+static uint8_t read_raw(gb_t *g, uint16_t addr);
+
+/* A transfer starts two M-cycles after the write to DMA (a new request
+ * replaces a running one only then), copies one byte per M-cycle and keeps
+ * the OAM busy for exactly 160 M-cycles. */
 static void dma_tick(gb_t *g) {
+    if (g->dma_start && --g->dma_start == 0) {
+        g->dma_active = 1;
+        g->dma_index = 0;
+        g->dma_source = g->dma_next;
+    }
     if (!g->dma_active) return;
-    if (g->dma_delay) {
-        g->dma_delay--;
+    if (g->dma_index == 0xA0) {
+        g->dma_active = 0;
         return;
     }
     uint16_t src = (uint16_t)(g->dma_source + g->dma_index);
-    /* DMA reads go through the bus but never see the OAM itself. */
-    g->oam[g->dma_index] = src >= 0xFE00 ? 0xFF : gb_read(g, src);
-    if (++g->dma_index == 0xA0) g->dma_active = 0;
+    if (src >= 0xE000) src -= 0x2000; /* above the echo RAM the DMG reads WRAM */
+    g->dma_byte = read_raw(g, src);
+    g->oam[g->dma_index++] = g->dma_byte;
 }
 
-void gb_tick(gb_t *g) {
+/* During a transfer the CPU shares the bus the DMA reads from: it sees the
+ * byte being copied instead of memory. VRAM is on its own bus. */
+static int dma_conflict(const gb_t *g, uint16_t addr) {
+    if (!g->dma_active || addr >= 0xFE00) return 0;
+    int src_vram = g->dma_source >= 0x8000 && g->dma_source < 0xA000;
+    int addr_vram = addr >= 0x8000 && addr < 0xA000;
+    return src_vram == addr_vram;
+}
+
+/* One M-cycle of everything but the PPU. */
+void gb_tick_early(gb_t *g) {
     g->cycles += 4;
     timer_tick(g);
     dma_tick(g);
-    ppu_tick(g);
     apu_tick(g);
-    cart_tick(g);
+    if (g->has_rtc) cart_tick(g);
+}
+
+void gb_tick(gb_t *g) {
+    gb_tick_early(g);
+    ppu_tick(g);
 }
 
 static uint8_t joypad_read(const gb_t *g) {
@@ -90,14 +133,40 @@ static uint8_t joypad_read(const gb_t *g) {
 
 static int ppu_mode(const gb_t *g) { return g->io[R_STAT] & 3; }
 
+/* Reads and writes are cut off at slightly different times (mooneye
+ * lcdon_timing and lcdon_write_timing). Drawing claims VRAM for reads one
+ * M-cycle before mode 3 shows in STAT; writes only fail in mode 3 proper. */
+static int vram_busy(const gb_t *g) {
+    int mode = ppu_mode(g);
+    return mode == 3 || (mode == 2 && g->dot >= 76);
+}
+
+/* For reads, the OAM scan of the next visible line claims the OAM from the
+ * M-cycle in which LY changes, one before mode 2 shows in STAT. */
+static int oam_busy(const gb_t *g) {
+    if (ppu_mode(g) >= 2) return 1;
+    return (g->io[R_LCDC] & 0x80) && g->dot >= 452 && (g->line < GB_HEIGHT - 1 || g->line == 153);
+}
+
+/* Writes still go through then, and in the last M-cycle of mode 2. */
+static int oam_write_busy(const gb_t *g) {
+    int mode = ppu_mode(g);
+    return mode == 3 || (mode == 2 && g->dot != 76);
+}
+
 uint8_t gb_read(gb_t *g, uint16_t addr) {
+    if (dma_conflict(g, addr)) return g->dma_byte;
+    return read_raw(g, addr);
+}
+
+static uint8_t read_raw(gb_t *g, uint16_t addr) {
     if (addr < 0x8000) return cart_read(g, addr);
-    if (addr < 0xA000) return ppu_mode(g) == 3 ? 0xFF : g->vram[addr & 0x1FFF];
+    if (addr < 0xA000) return vram_busy(g) ? 0xFF : g->vram[addr & 0x1FFF];
     if (addr < 0xC000) return cart_read(g, addr);
     if (addr < 0xFE00) return g->wram[addr & 0x1FFF];
     if (addr < 0xFEA0) {
-        if (g->dma_active && !g->dma_delay) return 0xFF;
-        return ppu_mode(g) >= 2 ? 0xFF : g->oam[addr - 0xFE00];
+        if (g->dma_active) return 0xFF;
+        return oam_busy(g) ? 0xFF : g->oam[addr - 0xFE00];
     }
     if (addr < 0xFF00) return 0xFF;
     if (addr == 0xFFFF) return g->ie;
@@ -117,6 +186,7 @@ uint8_t gb_read(gb_t *g, uint16_t addr) {
 }
 
 void gb_write(gb_t *g, uint16_t addr, uint8_t v) {
+    if (dma_conflict(g, addr)) return;
     if (addr < 0x8000) { cart_write(g, addr, v); return; }
     if (addr < 0xA000) {
         if (ppu_mode(g) != 3) g->vram[addr & 0x1FFF] = v;
@@ -125,7 +195,7 @@ void gb_write(gb_t *g, uint16_t addr, uint8_t v) {
     if (addr < 0xC000) { cart_write(g, addr, v); return; }
     if (addr < 0xFE00) { g->wram[addr & 0x1FFF] = v; return; }
     if (addr < 0xFEA0) {
-        if (!(g->dma_active && !g->dma_delay) && ppu_mode(g) < 2) g->oam[addr - 0xFE00] = v;
+        if (!g->dma_active && !oam_write_busy(g)) g->oam[addr - 0xFE00] = v;
         return;
     }
     if (addr < 0xFF00) return;
@@ -138,11 +208,9 @@ void gb_write(gb_t *g, uint16_t addr, uint8_t v) {
     case R_SC:
         g->io[R_SC] = v;
         if ((v & 0x81) == 0x81) {
-            /* No link partner: the byte goes out, 0xFF comes back. */
+            /* No link partner: the byte goes out bit by bit, 0xFF comes back. */
             if (g->serial_len < GB_SERIAL_MAX) g->serial[g->serial_len++] = g->io[R_SB];
-            g->io[R_SB] = 0xFF;
-            g->io[R_SC] &= 0x7F;
-            g->io[R_IF] |= INT_SERIAL;
+            g->serial_bits = 0;
         }
         break;
     case R_DIV: timer_set(g, 0, g->io[R_TAC]); break;
@@ -174,10 +242,8 @@ void gb_write(gb_t *g, uint16_t addr, uint8_t v) {
         break;
     case R_DMA:
         g->io[R_DMA] = v;
-        g->dma_source = (uint16_t)(v << 8);
-        g->dma_index = 0;
-        g->dma_delay = 1;
-        g->dma_active = 1;
+        g->dma_next = (uint16_t)(v << 8);
+        g->dma_start = 2;
         break;
     }
 }
@@ -200,8 +266,8 @@ int gb_load(gb_t *g, const uint8_t *rom, size_t size) {
     g->h = 0x01; g->l = 0x4D;
     g->sp = 0xFFFE;
     g->pc = 0x0100;
-    g->sysclk = 0xABCC;
-    g->io[R_P1] = 0x30;
+    g->sysclk = 0xABC8;
+    g->io[R_P1] = 0x00; /* both button groups selected */
     g->io[R_SC] = 0x7E;
     g->io[R_TAC] = 0x00;
     g->io[R_IF] = 0x01;
