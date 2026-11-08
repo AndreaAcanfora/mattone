@@ -58,6 +58,26 @@ typedef struct {
     int16_t audio[GB_AUDIO_MAX * 2]; /* interleaved left, right */
 } gb_apu;
 
+/* The PPU's mode 3 pipeline: a background fetcher feeding a pixel FIFO, and
+ * a sprite FIFO mixed in as pixels go out. */
+typedef struct {
+    uint8_t bg_lo, bg_hi, bg_count; /* background FIFO: two bitplanes shifting out MSB first */
+    uint8_t obj[8], obj_attr[8];    /* sprite FIFO: colour and attributes for pixel x at [x & 7] */
+    uint8_t step;                   /* fetcher dot counter: 0-5 fetching, 6+ waiting to push */
+    uint8_t tile_x, tile, lo, hi;   /* fetcher: tile column, tile number and data */
+    uint8_t window, window_x;       /* fetching the window, and its tile column */
+    uint8_t lx, discard, t;         /* pixels out, SCX pixels still to drop, dots in mode 3 */
+    uint8_t sprites[10], sprite_count, sprite_next;
+    uint8_t sprite_wait;            /* dots left in a sprite fetch */
+    uint8_t window_used, wy_hit;    /* window drawn on this line; WY matched LY this frame */
+    struct { uint8_t x, color, valid; } lcd[4]; /* pixels on their way to the LCD, by dot */
+    uint8_t lcd_t, lcd_count;
+    uint8_t lcd_just_on;            /* line 0 is the first after switching the LCD on */
+    uint8_t startup, sprite_seen, window_start, window_skip;
+    int16_t last_tile;              /* for sprite penalties: last tile a sprite waited on */
+    uint8_t pal_glitch[3], glitch_dots; /* old BGP/OBP0/OBP1 values ORed in after a write */
+} gb_fifo;
+
 typedef struct gb {
     /* CPU */
     uint8_t a, f, b, c, d, e, h, l;
@@ -90,7 +110,8 @@ typedef struct gb {
     uint8_t tima_reloaded; /* set during the M-cycle in which the reload happened */
 
     /* PPU */
-    uint16_t dot, hblank_dot;
+    uint16_t dot;
+    gb_fifo fifo;
     uint8_t line; /* the line being drawn; LY changes slightly before it */
     uint8_t window_line, stat_line, frame_done;
     uint8_t pixels[GB_HEIGHT][GB_WIDTH]; /* shades 0 (white) .. 3 (black) */

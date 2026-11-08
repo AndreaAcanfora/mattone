@@ -37,3 +37,17 @@ if [ ! -d mooneye ]; then
 fi
 fetch "https://raw.githubusercontent.com/Gekkio/mooneye-test-suite/31510e12eea6286d36eea060a6adde755e1067aa/manual-only/sprite_priority-expected.png" \
     sprite_priority.png e08708fd0e5fc7df8650314707ec0ce0c929b969f2e19b6f2860c1e82828e9a0
+
+MB=70e88fb90b59d19dfbb9c3ac36c64105202bb1f4
+fetch "https://raw.githubusercontent.com/mattcurrie/mealybug-tearoom-tests/$MB/mealybug-tearoom-tests.zip" mealybug.zip \
+    e2fa6ca96ad48bd64d7297fda042db04c15117a730da3bbd590f139e89b150bd
+if [ ! -d mealybug ]; then
+    mkdir mealybug
+    python3 -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" mealybug.zip mealybug
+fi
+for t in m2_win_en_toggle:b3125f1cfedaa0dd0ff8f02b9b44acf2343af9154d05dfd8788b98a0fc153935 \
+         m3_bgp_change:c46133683a51f6eed3c79deb99cb0aa516f147918276c73f335c2b7d5d821f98 \
+         m3_scx_low_3_bits:a05cd516b63ee547f6a8fa373bdecf46308baa5806be7f55f3eba207c3c03d21; do
+    fetch "https://raw.githubusercontent.com/mattcurrie/mealybug-tearoom-tests/$MB/expected/DMG-blob/${t%%:*}.png" \
+        "mealybug/${t%%:*}.png" "${t#*:}"
+done

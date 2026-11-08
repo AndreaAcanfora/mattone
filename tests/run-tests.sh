@@ -21,6 +21,14 @@ mooneye() { # rom
     if $RUN --frames 1200 --mooneye "$M/$1" >/dev/null; then pass "$1"; else fail "$1"; fi
 }
 
+# mealybug: the screen when the ROM reaches LD B,B must match the reference.
+mealybug() { # name
+    shot=$(mktemp)
+    $RUN --frames 600 --mooneye --screenshot "$shot" "tests/roms/mealybug/$1.gb" >/dev/null
+    if result=$(python3 tests/compare.py "$shot" "tests/roms/mealybug/$1.png"); then pass "mealybug $1"; else fail "mealybug $1"; echo "        $result"; fi
+    rm -f "$shot"
+}
+
 # Screen tests: the ROM halts on a final image that must match the reference.
 screen() { # name rom reference frames
     shot=$(mktemp)
@@ -55,6 +63,8 @@ python3 tests/tone-test.py "$RUN" || failed=$((failed + 1))
 echo "PPU"
 screen dmg-acid2 tests/roms/dmg-acid2.gb tests/roms/dmg-acid2.png 60
 screen "mooneye manual-only/sprite_priority" "$M/manual-only/sprite_priority.gb" tests/roms/sprite_priority.png 120
+echo "Mid-scanline register changes"
+for t in m2_win_en_toggle m3_bgp_change m3_scx_low_3_bits; do mealybug "$t"; done
 echo "mooneye (every test that applies to the DMG)"
 for rom in $(cd "$M" && find acceptance emulator-only -name '*.gb' | sort); do
     case "$(basename "$rom" .gb)" in

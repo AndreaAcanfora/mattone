@@ -18,6 +18,10 @@ jobs:
         cc: [gcc, clang]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: tests/roms
+          key: test-roms-${{ hashFiles('tests/fetch-roms.sh') }}
       - name: Fetch the test ROMs
         run: tests/fetch-roms.sh
       - name: Build
@@ -43,6 +47,10 @@ jobs:
           rm wasi-sdk.tar.gz
       - name: Build the WebAssembly module
         run: WASI_SDK="$RUNNER_TEMP/wasi-sdk" scripts/build-web.sh | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/cache@v4
+        with:
+          path: tests/roms
+          key: test-roms-${{ hashFiles('tests/fetch-roms.sh') }}
       - name: dmg-acid2 in the WebAssembly build matches the reference
         run: |
           tests/fetch-roms.sh

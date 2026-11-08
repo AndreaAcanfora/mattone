@@ -49,6 +49,7 @@ void ppu_reset(gb_t *gb);
 void ppu_tick(gb_t *gb);
 void ppu_write_lcdc(gb_t *gb, uint8_t value);
 void ppu_update_stat(gb_t *gb);
+void ppu_palette_write(gb_t *gb, int reg, uint8_t value);
 enum { OAM_BUG_READ, OAM_BUG_WRITE, OAM_BUG_IDU_DURING_READ };
 void ppu_oam_bug(gb_t *gb, int kind);
 
