@@ -237,6 +237,7 @@ static void exec(gb_t *g, uint8_t op) {
         if (g->cgb && (g->io[R_KEY1] & 1)) {
             g->double_speed ^= 1;
             g->io[R_KEY1] = 0;
+            g->speed_switch_wait = 8200; /* the CPU then stops for 2050 M-cycles */
         }
         g->sysclk = 0;
         break;
@@ -415,6 +416,12 @@ static void dispatch_interrupt(gb_t *g) {
 
 int cpu_step(gb_t *g) {
     uint64_t start = g->cycles;
+    if (g->speed_switch_wait) { /* DIV does not tick meanwhile (Pan Docs, KEY1) */
+        int t = g->double_speed ? 2 : 4;
+        g->speed_switch_wait = (uint16_t)(g->speed_switch_wait > t ? g->speed_switch_wait - t : 0);
+        gb_tick(g);
+        return (int)(g->cycles - start);
+    }
     if (g->cpu_stall) { /* waiting for a CGB VRAM DMA */
         g->cpu_stall--;
         gb_tick(g);

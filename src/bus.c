@@ -120,7 +120,7 @@ static int dma_conflict(const gb_t *g, uint16_t addr) {
 void gb_tick_early(gb_t *g) {
     int t = g->double_speed ? 2 : 4;
     g->cycles += (uint64_t)t;
-    timer_tick(g);
+    if (!g->speed_switch_wait) timer_tick(g);
     dma_tick(g);
     apu_tick(g, t);
     if (g->has_rtc) cart_tick(g, t);
@@ -248,15 +248,21 @@ static uint8_t read_raw(gb_t *g, uint16_t addr) {
     case R_DIV: return g->sysclk >> 8;
     case R_LY: return (g->io[R_LCDC] & 0x80) ? g->io[R_LY] : 0;
     case 0x26: return apu_read(g, reg);
+    /* CGB registers; in compatibility mode most are locked (mooneye boot_hwio-C). */
     case R_KEY1: return g->cgb ? (uint8_t)(0x7E | g->double_speed << 7 | (g->io[R_KEY1] & 1)) : 0xFF;
-    case R_VBK: return g->cgb ? (uint8_t)(0xFE | g->vram_bank) : 0xFF;
+    case R_VBK: return g->cgb ? (uint8_t)(0xFE | g->vram_bank) : g->cgb_hw ? 0xFE : 0xFF;
     case R_HDMA5: return g->cgb ? (uint8_t)(g->hdma_hblank ? g->hdma_blocks - 1 : 0xFF) : 0xFF;
-    case R_BCPS: return g->cgb ? (uint8_t)(g->bcps | 0x40) : 0xFF;
-    case R_OCPS: return g->cgb ? (uint8_t)(g->ocps | 0x40) : 0xFF;
+    case R_BCPS: return g->cgb_hw ? (uint8_t)(g->bcps | 0x40) : 0xFF;
+    case R_OCPS: return g->cgb_hw ? (uint8_t)(g->ocps | 0x40) : 0xFF;
     case R_BCPD: return g->cgb && ppu_mode(g) != 3 ? g->bg_palette[g->bcps & 0x3F] : 0xFF;
     case R_OCPD: return g->cgb && ppu_mode(g) != 3 ? g->obj_palette[g->ocps & 0x3F] : 0xFF;
     case R_OPRI: return g->cgb ? (uint8_t)(0xFE | (g->io[R_OPRI] & 1)) : 0xFF;
     case R_SVBK: return g->cgb ? (uint8_t)(0xF8 | g->wram_bank) : 0xFF;
+    case 0x72: return g->cgb_hw ? g->cgb_undoc[0] : 0xFF;
+    case 0x73: return g->cgb_hw ? g->cgb_undoc[1] : 0xFF;
+    case 0x74: return g->cgb ? g->io[0x74] : 0xFF;
+    case 0x75: return g->cgb_hw ? (uint8_t)(g->cgb_undoc[2] | 0x8F) : 0xFF;
+    case 0x76: case 0x77: return g->cgb_hw ? 0x00 : 0xFF; /* PCM amplitudes: not modelled */
     case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35: case 0x36: case 0x37:
     case 0x38: case 0x39: case 0x3A: case 0x3B: case 0x3C: case 0x3D: case 0x3E: case 0x3F:
         return apu_read(g, reg);
@@ -325,6 +331,10 @@ void gb_write(gb_t *g, uint16_t addr, uint8_t v) {
     case R_BCPS: case R_BCPD: case R_OCPS: case R_OCPD: case R_OPRI: case R_SVBK:
         if (g->cgb) cgb_write(g, reg, v);
         break;
+    case 0x72: g->cgb_undoc[0] = v; break;
+    case 0x73: g->cgb_undoc[1] = v; break;
+    case 0x74: if (g->cgb) g->io[0x74] = v; break;
+    case 0x75: g->cgb_undoc[2] = v & 0x70; break;
     case R_DMA:
         g->io[R_DMA] = v;
         g->dma_next = (uint16_t)(v << 8);
@@ -371,8 +381,17 @@ int gb_load_model(gb_t *g, const uint8_t *rom, size_t size, int model) {
     if (err) return err;
 
     /* Register values left by the boot ROM. */
-    g->cgb = model == GB_MODEL_CGB || (model == GB_MODEL_AUTO && (rom[0x143] & 0x80));
-    if (g->cgb) {
+    g->cgb_hw = model == GB_MODEL_CGB || (model == GB_MODEL_AUTO && (rom[0x143] & 0x80));
+    g->cgb = g->cgb_hw && (rom[0x143] & 0x80);
+    if (g->cgb_hw && !g->cgb) {
+        /* A DMG cartridge on a CGB: compatibility mode. */
+        g->a = 0x11; g->f = 0x80;
+        g->b = 0x00; g->c = 0x00;
+        g->d = 0x00; g->e = 0x08;
+        g->h = 0x00; g->l = 0x7C;
+        g->bcps = 0x88; /* where the boot ROM left the palette indexes */
+        g->ocps = 0x90;
+    } else if (g->cgb) {
         g->a = 0x11; g->f = 0x80;
         g->b = 0x00; g->c = 0x00;
         g->d = 0xFF; g->e = 0x56;
@@ -388,8 +407,10 @@ int gb_load_model(gb_t *g, const uint8_t *rom, size_t size, int model) {
     }
     g->sp = 0xFFFE;
     g->pc = 0x0100;
-    g->sysclk = 0xABC8;
-    g->io[R_P1] = 0x00; /* both button groups selected */
+    /* System clock phase at 0x100 (mooneye boot_div-dmgABCmgb and, for the
+     * CGB, boot_div-cgbABCDE, which runs in compatibility mode). */
+    g->sysclk = g->cgb_hw ? 0x2674 : 0xABC8;
+    g->io[R_P1] = g->cgb_hw ? 0x30 : 0x00; /* the DMG boot ROM leaves both button groups selected */
     g->io[R_SC] = 0x7E;
     g->io[R_TAC] = 0x00;
     g->io[R_IF] = 0x01;
@@ -400,7 +421,7 @@ int gb_load_model(gb_t *g, const uint8_t *rom, size_t size, int model) {
     g->io[R_BGP] = 0xFC;
     g->io[R_OBP0] = 0xFF;
     g->io[R_OBP1] = 0xFF;
-    if (!g->cgb) boot_vram(g);
+    if (!g->cgb_hw) boot_vram(g);
     ppu_reset(g);
     apu_reset(g);
     return GB_OK;

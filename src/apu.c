@@ -206,7 +206,7 @@ static void trigger(gb_t *g, int ch) {
     gb_channel *c = &g->apu.ch[ch];
     uint8_t nrx2 = g->io[base(ch) + 2];
 
-    if (!g->cgb && ch == CH_WAVE && c->enabled && c->timer <= 2) {
+    if (!g->cgb_hw && ch == CH_WAVE && c->enabled && c->timer <= 2) {
         /* DMG: retriggering just as the channel reads wave RAM corrupts it. */
         int pos = ((c->wave_pos + 1) & 31) / 2;
         if (pos < 4) {
@@ -268,7 +268,7 @@ static void power_off(gb_t *g) {
         gb_channel *c = &g->apu.ch[ch];
         c->enabled = 0;
         c->dac = 0;
-        if (g->cgb) c->length = 0; /* the DMG keeps its length counters */
+        if (g->cgb_hw) c->length = 0; /* the DMG keeps its length counters */
     }
     g->apu.power = 0;
 }
@@ -290,7 +290,7 @@ uint8_t apu_read(gb_t *g, uint8_t reg) {
     if (reg >= WAVE) {
         if (!wave_busy(g)) return g->io[reg];
         /* While playing, the CGB always gives the byte being played. */
-        if (g->cgb || g->apu.wave_read) return g->io[WAVE + g->apu.ch[CH_WAVE].wave_pos / 2];
+        if (g->cgb_hw || g->apu.wave_read) return g->io[WAVE + g->apu.ch[CH_WAVE].wave_pos / 2];
         return 0xFF;
     }
     if (reg == NR52) {
@@ -306,7 +306,7 @@ void apu_write(gb_t *g, uint8_t reg, uint8_t v) {
     g->apu.dirty = 1; /* any write can change what the mixer outputs */
     if (reg >= WAVE) {
         if (!wave_busy(g)) g->io[reg] = v;
-        else if (g->cgb || g->apu.wave_read) g->io[WAVE + g->apu.ch[CH_WAVE].wave_pos / 2] = v;
+        else if (g->cgb_hw || g->apu.wave_read) g->io[WAVE + g->apu.ch[CH_WAVE].wave_pos / 2] = v;
         return;
     }
     if (reg == NR52) {
@@ -316,7 +316,7 @@ void apu_write(gb_t *g, uint8_t reg, uint8_t v) {
     }
     if (!g->apu.power) {
         /* With the APU off only the DMG's length counters can be written. */
-        if (!g->cgb && (reg == NR11 || reg == NR21 || reg == NR31 || reg == NR41)) write_length(g, (reg - NR10) / 5, v);
+        if (!g->cgb_hw && (reg == NR11 || reg == NR21 || reg == NR31 || reg == NR41)) write_length(g, (reg - NR10) / 5, v);
         return;
     }
 

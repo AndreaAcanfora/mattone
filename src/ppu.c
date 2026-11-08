@@ -31,8 +31,11 @@ void ppu_update_stat(gb_t *g) {
     g->io[R_STAT] = stat;
 
     int mode = stat & 3;
-    /* On the DMG the mode 2 source also fires as line 144 (V-blank) begins. */
-    int oam = mode == MODE_OAM || (mode == MODE_VBLANK && g->line == GB_HEIGHT && g->dot == 0);
+    /* The mode 2 source also fires for line 144, where V-blank begins: on the
+     * DMG with it, on the CGB one M-cycle earlier (mooneye vblank_stat_intr). */
+    int oam = mode == MODE_OAM ||
+              (g->cgb_hw ? g->line == GB_HEIGHT - 1 && g->dot == DOTS_PER_LINE - 4
+                         : mode == MODE_VBLANK && g->line == GB_HEIGHT && g->dot == 0);
     int line = ((stat & 0x40) && coincidence) || ((stat & 0x08) && mode == MODE_HBLANK) ||
                ((stat & 0x10) && mode == MODE_VBLANK) || ((stat & 0x20) && oam);
     if (line && !g->stat_line) g->io[R_IF] |= INT_STAT;
@@ -416,7 +419,7 @@ static void copy_row(gb_t *g, int to, int from) {
  * the PPU scans OAM garbles the row being scanned (Pan Docs, "OAM Corruption
  * Bug"). The address and the value do not matter, only the kind of access. */
 void ppu_oam_bug(gb_t *g, int kind) {
-    if (g->cgb) return; /* fixed on the CGB */
+    if (g->cgb_hw) return; /* fixed on the CGB */
     int row = oam_scan_row(g);
     if (row < 1 || row >= 20) return;
     if (kind == OAM_BUG_IDU_DURING_READ) {
@@ -438,7 +441,7 @@ void ppu_oam_bug(gb_t *g, int kind) {
 
 /* A palette write during mode 3: for one dot the DMG uses old | new. */
 void ppu_palette_write(gb_t *g, int reg, uint8_t v) {
-    if (!g->cgb && (g->io[R_LCDC] & 0x80) && g->fifo.lcd_count) {
+    if (!g->cgb_hw && (g->io[R_LCDC] & 0x80) && g->fifo.lcd_count) {
         g->fifo.pal_glitch[reg - R_BGP] = g->io[reg];
         g->fifo.glitch_dots = 2;
     }

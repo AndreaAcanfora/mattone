@@ -86,8 +86,10 @@ typedef struct gb {
     uint8_t ime, ei_pending, halted, halt_bug;
     uint8_t breakpoint; /* set when LD B,B runs: test ROMs use it to say "done" */
 
-    /* Game Boy Color mode (a CGB cartridge); otherwise the original DMG */
-    uint8_t cgb, double_speed;
+    /* cgb_hw: the machine is a Game Boy Color. cgb: it runs in CGB mode (a CGB
+     * cartridge); a CGB running a DMG cartridge is in compatibility mode. */
+    uint8_t cgb_hw, cgb, double_speed;
+    uint8_t cgb_undoc[3]; /* CGB registers FF72, FF73, FF75 */
 
     /* memory */
     const uint8_t *rom;
@@ -129,6 +131,7 @@ typedef struct gb {
     uint16_t hdma_source, hdma_dest;
     uint8_t hdma_blocks, hdma_hblank; /* 16-byte blocks left; copying one per H-blank */
     uint8_t cpu_stall;                /* M-cycles the CPU waits for a DMA */
+    uint16_t speed_switch_wait;       /* T-cycles left in a CGB speed switch */
 
     /* OAM DMA */
     uint8_t dma_active, dma_index, dma_start, dma_byte; /* dma_start: M-cycles until a requested transfer begins */
