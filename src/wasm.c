@@ -64,3 +64,12 @@ EXPORT("audio_take") uint32_t audio_take(void) { return (uint32_t)gb_audio_take(
 /* Battery-backed cartridge RAM, so the page can keep saves in localStorage. */
 EXPORT("save_ram") uint8_t *save_ram(void) { return gb.cart_ram; }
 EXPORT("save_size") uint32_t save_size(void) { return gb.has_battery ? gb.cart_ram_size : 0; }
+
+/* The link port: what the game sent since the last serial_take(), in serial_buffer()
+ * (valid until the next run_frame). Homebrew tools print debug text this way. */
+EXPORT("serial_buffer") const uint8_t *serial_buffer(void) { return gb.serial; }
+EXPORT("serial_take") uint32_t serial_take(void) {
+    uint32_t n = gb.serial_len;
+    gb.serial_len = 0;
+    return n;
+}
