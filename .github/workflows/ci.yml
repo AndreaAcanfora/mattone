@@ -20,8 +20,8 @@ jobs:
       matrix:
         cc: [gcc, clang]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
         with:
           path: tests/roms
           key: test-roms-${{ hashFiles('tests/fetch-roms.sh') }}
@@ -39,7 +39,7 @@ jobs:
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install wasi-sdk
         run: |
           # wasi-sdk-34.0-x86_64-linux.tar.gz, through the API like tests/fetch-roms.sh
@@ -52,7 +52,7 @@ jobs:
           rm wasi-sdk.tar.gz
       - name: Build the WebAssembly module
         run: WASI_SDK="$RUNNER_TEMP/wasi-sdk" scripts/build-web.sh | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: tests/roms
           key: test-roms-${{ hashFiles('tests/fetch-roms.sh') }}
@@ -63,7 +63,7 @@ jobs:
           python3 tests/compare.py acid2-wasm.pgm tests/roms/dmg-acid2.png
           node tests/wasm-test.mjs tests/roms/cgb-acid2.gbc cgb-acid2-wasm.ppm
           python3 tests/compare.py cgb-acid2-wasm.ppm tests/roms/cgb-acid2.png
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: web
           path: web
@@ -80,12 +80,12 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: web
           path: web
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: web
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
