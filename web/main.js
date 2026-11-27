@@ -31,7 +31,8 @@ let turbo = false;
 let held = 0; // buttons from keyboard and touch
 let audio = null; // { ctx, next } once the browser lets us play sound
 let muted = localStorage.getItem("mattone:muted") === "1";
-const pointerButtons = new Map();
+const pointerButtons = new Map(); // pointer id -> names of the buttons under it
+const touchHeld = new Set(); // buttons held by any pointer
 
 async function loadWasm(url) {
   if (WebAssembly.instantiateStreaming) {
@@ -276,38 +277,67 @@ addEventListener("keyup", (e) => {
 });
 addEventListener("blur", () => {
   for (const name of Object.keys(BUTTONS)) press(name, false);
+  pointerButtons.clear();
+  touchHeld.clear();
   setTurbo(false);
 });
 
-// Touch and mouse: a finger can slide from one button to the next.
+// Touch and mouse: a finger can slide from one button to the next. The d-pad is
+// read by angle from its centre over an area wider than the drawn cross, so a
+// thumb that lands on a corner or drifts off an arm still steers, and the
+// corners give diagonals.
 const pad = document.getElementById("pad");
-function buttonAt(x, y) {
-  return document.elementFromPoint(x, y)?.closest?.("[data-button]")?.dataset.button ?? null;
+const dpad = document.getElementById("dpad");
+const DPAD_REACH = 1.4; // touch area, as a multiple of the drawn d-pad
+const DPAD_DEAD = 0.18; // centre dead zone, as a fraction of the half width
+const DPAD_SECTORS = [["right"], ["right", "down"], ["down"], ["down", "left"],
+  ["left"], ["left", "up"], ["up"], ["up", "right"]];
+function dpadOffset(x, y) {
+  const r = dpad.getBoundingClientRect();
+  const half = r.width / 2;
+  const dx = x - (r.left + half);
+  const dy = y - (r.top + r.height / 2);
+  const inside = Math.abs(dx) <= half * DPAD_REACH && Math.abs(dy) <= half * DPAD_REACH;
+  return inside ? { dx, dy, half } : null;
 }
-function pointerMove(e) {
-  if (!pointerButtons.has(e.pointerId)) return;
-  const before = pointerButtons.get(e.pointerId);
-  const now = buttonAt(e.clientX, e.clientY);
-  if (now === before) return;
-  if (before) press(before, false);
-  if (now) press(now, true);
-  pointerButtons.set(e.pointerId, now);
+function buttonsAt(x, y) {
+  const d = dpadOffset(x, y);
+  if (d) {
+    const { dx, dy, half } = d;
+    if (Math.hypot(dx, dy) < half * DPAD_DEAD) return [];
+    // 8 sectors of 45°, with diagonals; screen y grows downwards.
+    const sector = Math.round(Math.atan2(dy, dx) / (Math.PI / 4));
+    return DPAD_SECTORS[(sector + 8) % 8];
+  }
+  const name = document.elementFromPoint(x, y)?.closest?.("[data-button]")?.dataset.button;
+  return name ? [name] : [];
+}
+function syncPointers() {
+  const now = new Set([...pointerButtons.values()].flat());
+  for (const name of touchHeld) if (!now.has(name)) press(name, false);
+  for (const name of now) if (!touchHeld.has(name)) press(name, true);
+  const grew = [...now].some((name) => !touchHeld.has(name));
+  touchHeld.clear();
+  now.forEach((name) => touchHeld.add(name));
+  if (grew) navigator.vibrate?.(8);
 }
 pad.addEventListener("pointerdown", (e) => {
-  const name = buttonAt(e.clientX, e.clientY);
-  if (!name) return;
+  const names = buttonsAt(e.clientX, e.clientY);
+  if (!names.length && !dpadOffset(e.clientX, e.clientY)) return;
   e.preventDefault();
   pad.setPointerCapture(e.pointerId);
-  pointerButtons.set(e.pointerId, name);
-  press(name, true);
-  navigator.vibrate?.(8);
+  pointerButtons.set(e.pointerId, names);
+  syncPointers();
 });
-pad.addEventListener("pointermove", pointerMove);
+pad.addEventListener("pointermove", (e) => {
+  if (!pointerButtons.has(e.pointerId)) return;
+  pointerButtons.set(e.pointerId, buttonsAt(e.clientX, e.clientY));
+  syncPointers();
+});
 for (const type of ["pointerup", "pointercancel"]) {
   pad.addEventListener(type, (e) => {
-    const name = pointerButtons.get(e.pointerId);
     pointerButtons.delete(e.pointerId);
-    if (name && ![...pointerButtons.values()].includes(name)) press(name, false);
+    syncPointers();
   });
 }
 pad.addEventListener("contextmenu", (e) => e.preventDefault());
